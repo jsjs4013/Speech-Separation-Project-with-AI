@@ -214,7 +214,7 @@ def audioread(path, offset=0.0, duration=None, sample_rate=16000):
     
     return signal[0]
 
-def max_length(target_wav_dir, name, mix_or_not):
+def max_length(target_wav_dir, sample_rate, name, mix_or_not):
     max_len = 0
     
     for name in lines:
@@ -380,12 +380,12 @@ def main():
                 if CASE == 'mixed':
                     for name in lines:
                         name = name.strip('\n')
-                        max_len = max_length(target_wav_dir, name, 'mix')
+                        max_len = max_length(target_wav_dir, sample_rate, name, 'mix')
                 else:
                     for name in lines:
                         name = name.strip('\n')
-                        max_len1 = max_length(target_wav_dir, name, 's1')
-                        max_len2 = max_length(target_wav_dir, name, 's2')
+                        max_len1 = max_length(target_wav_dir, sample_rate, name, 's1')
+                        max_len2 = max_length(target_wav_dir, sample_rate, name, 's2')
 
                     if max_len1 >= max_len2:
                         max_len = max_len1
