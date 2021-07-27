@@ -15,8 +15,6 @@ import librosa.display
 sys.path.append('.')
 
 import threading
-from math import ceil
-from tqdm.auto import tqdm
 
 
 #/home/aimaster/lab_storage/Datasets/LibriMix/MixedData/Libri2Mix/wav8k/max/
@@ -216,196 +214,103 @@ def audioread(path, offset=0.0, duration=None, sample_rate=16000):
     
     return signal[0]
 
-def max_length(target_wav_dir, sample_rate, mix_or_not, lines):
-    max_len = 0
-    progress_bar = tqdm(range(len(lines)))
-    for name in lines:
-        name = name.strip('\n')
-
-        wav_name = target_wav_dir + '/' + mix_or_not + '/' + name
-        audio_wav = audioread(wav_name, offset=0.0, duration=None, sample_rate=sample_rate)
-        mix_len = len(audio_wav)
-        progress_bar.update(1)
-
-        if mix_len > max_len:
-            max_len = mix_len
-    
-    # 초 맞춰주는 부분
-    max_len = ceil(max_len / sample_rate) * sample_rate
-    
-    return max_len
-
-def make_sequence_example(inputs, labels, length, name, genders=False):
+def make_sequence_example(inputs, labels, genders=None):
     input_features = [tf.train.Feature(float_list=tf.train.FloatList(value=input_)) for input_ in inputs]
     label_features = [tf.train.Feature(float_list=tf.train.FloatList(value=label)) for label in labels]
-    len_feature = [tf.train.Feature(float_list=tf.train.FloatList(value=[length]))]
-    name_feature = [tf.train.Feature(bytes_list=tf.train.BytesList(value=[name.encode('utf-8')]))]
-#     gender_features = [tf.train.Feature(float_list=tf.train.FloatList(value=genders))]
-    
+    #gender_features = [tf.train.Feature(float_list=tf.train.FloatList(value=genders))]
     feature_list = {
         'inputs': tf.train.FeatureList(feature=input_features),
         'labels': tf.train.FeatureList(feature=label_features),
-        'length': tf.train.FeatureList(feature=len_feature),
-        'name' : tf.train.FeatureList(feature=name_feature)
-#         'genders': tf.train.FeatureList(feature=gender_features)
     }
+#        'genders': tf.train.FeatureList(feature=gender_features)
+
     feature_lists = tf.train.FeatureLists(feature_list=feature_list)
     
     return tf.train.SequenceExample(feature_lists=feature_lists)
 
 
-def gen_feats(wav_name, sample_rate, window_size, window_shift, file, tfrecord_d, target_wav_dir, max_len, case='mixed'):
-    mix_wav_name = target_wav_dir + '/mix_clean/' + wav_name
-    s1_wav_name  = target_wav_dir + '/s1/' + wav_name
-    s2_wav_name  = target_wav_dir + '/s2/' + wav_name
+def gen_feats(wav_name, sample_rate, window_size, window_shift, file, tfrecord_d, target_wav_dir):
+    mix_wav_name = target_wav_dir + 'mix_clean/' + wav_name
+    s1_wav_name  = target_wav_dir + 's1/' + wav_name
+    s2_wav_name  = target_wav_dir + 's2/' + wav_name
 
-    # value initiallization
-    mix_wav = 0
-    s1_wav = 0
-    s2_wav = 0
-    mix_stft = 0
-    s1_stft = 0
-    s2_stft = 0
+    mix_wav = audioread(mix_wav_name, offset=0.0, duration=None, sample_rate=sample_rate)
+    s1_wav  = audioread(s1_wav_name,  offset=0.0, duration=None, sample_rate=sample_rate)
+    s2_wav  = audioread(s2_wav_name,  offset=0.0, duration=None, sample_rate=sample_rate)
+
+    mix_stft = stft(mix_wav, time_dim=0, size=window_size, shift=window_shift)
+    s1_stft  = stft(s1_wav,  time_dim=0, size=window_size, shift=window_shift)
+    s2_stft  = stft(s2_wav,  time_dim=0, size=window_size, shift=window_shift)
     
-    if case == 'mixed':
-        # ------- AUDIO READ -------
-        mix_wav = audioread(mix_wav_name, offset=0.0, duration=None, sample_rate=sample_rate)
-        s1_wav  = audioread(s1_wav_name,  offset=0.0, duration=None, sample_rate=sample_rate)
-        s2_wav  = audioread(s2_wav_name,  offset=0.0, duration=None, sample_rate=sample_rate)
-        # --------------------------
-        
-        # ------- AUDIO PAD -------
-        mix_wav_pad = np.pad(mix_wav, (0, max_len - len(mix_wav)), 'constant', constant_values=(0))
-        s1_wav_pad = np.pad(s1_wav, (0, max_len - len(s1_wav)), 'constant', constant_values=(0))
-        s2_wav_pad = np.pad(s2_wav, (0, max_len - len(s2_wav)), 'constant', constant_values=(0))
-        # -------------------------
+#     mix2_stft = librosa.stft(mix_wav, n_fft=window_size, hop_length=window_shift, window=signal.blackman)
+#     db = librosa.amplitude_to_db(np.transpose(np.abs(s2_stft)),ref=np.max)
+#     db2 = librosa.amplitude_to_db(np.abs(mix2_stft),ref=np.max)
+#     librosa.display.specshow(db, sr=sample_rate, y_axis='linear', x_axis='time')
+#     librosa.display.specshow(db2, sr=sample_rate, y_axis='log', x_axis='time')
+#     print(np.transpose(np.abs(mix_stft)).shape)
 
-        # ------- STFT -------
-        mix_stft = stft(mix_wav, time_dim=0, size=window_size, shift=window_shift)
-        
-        mix_stft_pad = stft(mix_wav_pad, time_dim=0, size=window_size, shift=window_shift)
-        s1_stft_pad = stft(s1_wav_pad, time_dim=0, size=window_size, shift=window_shift)
-        s2_stft_pad = stft(s2_wav_pad, time_dim=0, size=window_size, shift=window_shift)
-        # --------------------
-        
-        part_name = os.path.splitext(wav_name)[0]
-        tfrecords_name = tfrecord_d + file + '_tfrecord/' + part_name + '.tfrecords'
-        
-        with tf.io.TFRecordWriter(tfrecords_name) as writer:
-            tf.compat.v1.logging.info("Writing utterance %s" %tfrecords_name)
+    #s1_gender = gender_dict[wav_name.split('_')[0][0:3]]
+    #s2_gender = gender_dict[wav_name.split('_')[2][0:3]]
 
-            mix_abs = np.abs(mix_stft_pad)
-            mix_angle = np.angle(mix_stft_pad)
+    part_name = os.path.splitext(wav_name)[0]
+    tfrecords_name = tfrecord_d + file + "_tfrecord/" + part_name + '.tfrecords'
+    #print(tfrecords_name)
 
-            s1_abs = np.abs(s1_stft_pad)
-            s1_angle = np.angle(s1_stft_pad)
+    with tf.io.TFRecordWriter(tfrecords_name) as writer:
+        tf.compat.v1.logging.info("Writing utterance %s" %tfrecords_name)
 
-            s2_abs = np.abs(s2_stft_pad)
-            s2_angle = np.angle(s2_stft_pad)
+        mix_abs = np.abs(mix_stft)
+        mix_angle = np.angle(mix_stft)
 
-            inputs = np.concatenate((mix_abs, mix_angle), axis=1)
-            labels = np.concatenate((s1_abs * np.cos(mix_angle - s1_angle), s2_abs * np.cos(mix_angle - s2_angle)), axis=1)
-            
-            ex = make_sequence_example(inputs, labels, mix_stft.shape[0], part_name)
-            writer.write(ex.SerializeToString())
-    else:
-        # ------- AUDIO READ -------
-        s1_wav  = audioread(s1_wav_name,  offset=0.0, duration=None, sample_rate=sample_rate)
-        s2_wav  = audioread(s2_wav_name,  offset=0.0, duration=None, sample_rate=sample_rate)
-        # --------------------------
-        
-        # ------- AUDIO PAD -------
-        s1_wav_pad = np.pad(s1_wav, (0, max_len - len(s1_wav)), 'constant', constant_values=(0))
-        s2_wav_pad = np.pad(s2_wav, (0, max_len - len(s2_wav)), 'constant', constant_values=(0))
-        # -------------------------
-        
-        # ------- STFT -------
-        s1_stft  = stft(s1_wav,  time_dim=0, size=window_size, shift=window_shift)
-        s2_stft  = stft(s2_wav,  time_dim=0, size=window_size, shift=window_shift)
-        
-        s1_stft_pad = stft(s1_wav_pad, time_dim=0, size=window_size, shift=window_shift)
-        s2_stft_pad = stft(s2_wav_pad, time_dim=0, size=window_size, shift=window_shift)
-        # --------------------
-        
-        part_name = os.path.splitext(wav_name)[0]
-        tfrecords_s1_name = tfrecord_d + file + '_one_source_tfrecord/' + part_name + '_s1.tfrecords'
-        tfrecords_s2_name = tfrecord_d + file + '_one_source_tfrecord/' + part_name + '_s2.tfrecords'
-        
-        with tf.io.TFRecordWriter(tfrecords_s1_name) as writer:
-            tf.compat.v1.logging.info("Writing utterance %s" %tfrecords_s1_name)
-            
-            s1_abs = np.abs(s1_stft_pad)
-            s1_angle = np.angle(s1_stft_pad)
-            
-            ex = make_sequence_example(s1_abs, s1_angle, s1_stft.shape[0], part_name + '_s1')
-            writer.write(ex.SerializeToString())
+        s1_abs = np.abs(s1_stft)
+        s1_angle = np.angle(s1_stft)
 
-        with tf.io.TFRecordWriter(tfrecords_s2_name) as writer:
-            tf.compat.v1.logging.info("Writing utterance %s" %tfrecords_s2_name)
-            
-            s2_abs = np.abs(s2_stft_pad)
-            s2_angle = np.angle(s2_stft_pad)
-            
-            ex = make_sequence_example(s2_abs, s2_angle, s2_stft.shape[0], part_name + '_s2')
-            writer.write(ex.SerializeToString())
+        s2_abs = np.abs(s2_stft)
+        s2_angle = np.angle(s2_stft)
 
-def gen_feats_total(lines, sample_rate, window_size, window_shift, files, tfrecord_d, target_wav_dir, max_len, CASE):
-    max_len = max_length(target_wav_dir, sample_rate, 'mix_clean', lines)
-    print('max_len : ', max_len)
-    progress_bar = tqdm(range(len(lines)))
+        inputs = np.concatenate((mix_abs, mix_angle), axis=1)
+        labels = np.concatenate((s1_abs * np.cos(mix_angle - s1_angle), s2_abs * np.cos(mix_angle - s2_angle)), axis=1)
+        #gender = [s1_gender, s2_gender]
+        
+#         print(inputs.shape)
+#         print(labels.shape)
+#         print(np.array(gender).shape)
+
+        ex = make_sequence_example(inputs, labels) # , gender
+        writer.write(ex.SerializeToString())
+
+def gen_feats_total(lines, sample_rate, window_size, window_shift, files, tfrecord_d, target_wav_dir):
     for name in lines:
         name = name.strip('\n')
-        gen_feats(name, sample_rate, window_size, window_shift, files, tfrecord_d, target_wav_dir, max_len, CASE)
-        progress_bar.update(1)
+#         pool.map_async(gen_feats, (name, sample_rate, window_size, window_shift, files))
+        gen_feats(name, sample_rate, window_size, window_shift, files, tfrecord_d, target_wav_dir)
 
-
-        
 def main():
-    CASE = 'mixed' # mixed or signal
-    
+
     sample_rate = 8000
     window_size = 256
     window_shift = 128
     threads = []
-    max_lens = {"max/" : 2000, "min/" : 1100}
+    CASE = 'single' # mixed or signal
 
-    for wave_select in ['wav16k/', 'wav8k/']:
-        for big_folder in ['max/','min/']:
-            for files in ['dev', 'test', 'train-100','train-360']:
+    for wave_select in ['wav16k/']: # 'wav8k/',
+        for big_folder in ['max/','min/']: # 
+            for files in ['dev']: # , 'test', 'train-100','train-360'
                 tfrecord_dir = wav_dir + wave_select + big_folder + files + "/"
+                
+            # 여기 멀티프로세싱 pool 적용 어케하는지 모르게씀
+            #     pool = multiprocessing.Pool(processes=process_num)
                 output_lst_files = list_dir + wave_select + big_folder + files + '_wav.lst'
                 target_wav_dir = wav_dir + wave_select + big_folder + files + "/"
-                
-                # Read file list
                 fid = open(output_lst_files, 'r')
                 lines = fid.readlines()
                 fid.close()
                 
+                mkdir_p(tfrecord_dir + files + '_tfrecord') # tfrecord_dir 폴더 만드는 코드
+                threads.append(threading.Thread(target=gen_feats_total, args=(lines, sample_rate, window_size, window_shift, files, tfrecord_dir, target_wav_dir)))
                 
-                # Check max length
-                max_len = 0
-                
-                if CASE == 'mixed':
-                    #for name in lines:
-                    #    name = name.strip('\n')
-                    #    max_len = max_length(target_wav_dir, sample_rate, name, 'mix_clean', lines)
-                    max_len = max_lens[big_folder]
-                else:
-                    
-                    max_len1 = max_length(target_wav_dir, sample_rate, 's1', lines)
-                    max_len2 = max_length(target_wav_dir, sample_rate, 's2', lines)
-
-                    if max_len1 >= max_len2:
-                        max_len = max_len1
-                    else:
-                        max_len = max_len2
-                
-                
-                # Make tfrecords files
-                mkdir_p(tfrecord_dir + files + '_tfrecord2') # tfrecord_dir 폴더 만드는 코드
-                mkdir_p(tfrecord_dir + files + '_one_source_tfrecord2') # tfrecord_dir 폴더 만드는 코드
-                threads.append(threading.Thread(target=gen_feats_total, args=(lines, sample_rate, window_size, window_shift, files, tfrecord_dir, target_wav_dir, max_len, CASE)))
-    
+            #     pool.close()
+            #     pool.join()
 
     for thread in threads :
         thread.start()
