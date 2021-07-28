@@ -24,17 +24,18 @@ def create_padding_mask(seq, length):
     # (batch, seq_len, input_size)
     # seq = (batch, 1, 1, seq_len)
     # seq[:, :length]
-    mask = 1 - tf.cast(tf.sequence_mask(length, tf.shape(seq)[1]), tf.float32)
+    # length (batch, 1)
+    mask = 1 - tf.cast(tf.sequence_mask(tf.squeeze(length), tf.shape(seq)[1]), tf.float32)
     # (batch_size, 1, seq_len)
     
     #seq = tf.cast(tf.math.equal(seq,0), tf.float32)
-    return mask[:, tf.newaxis, :, :] # (batch_size, 1, 1, seq_len, emb)
+    return mask[:, tf.newaxis, tf.newaxis, :] # (batch_size, 1, 1, seq_len, emb)
 
 def create_look_ahead_mask(size):
     mask = 1 - tf.linalg.band_part(tf.ones((size, size)), -1, 0)
     return mask  # (seq_len, seq_len)
 
-    
+
 def scaled_dot_product_attention(q, k, v, mask):
     """Calculate the attention weights.
     q, k, v must have matching leading dimensions.

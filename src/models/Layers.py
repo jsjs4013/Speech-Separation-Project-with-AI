@@ -123,24 +123,19 @@ class DecoderLayer(tf.keras.layers.Layer):
         # enc_output.shape == (batch_size, input_seq_len, d_model)
 
         normed_x = self.layernorm1(x)
-        print('normed_x', normed_x.shape)
         attn1, attn_weights_block1 = self.mha1(normed_x, normed_x, normed_x, look_ahead_mask)  # (batch_size, target_seq_len, d_model)
-        print('attn1', attn1.shape)
         out1 = x + self.dropout1(attn1, training=training)
 
         normed_out1 = self.layernorm2(out1)
         attn2, attn_weights_block2 = self.mha2(
             enc_output, enc_output, normed_out1, padding_mask)  # (batch_size, target_seq_len, d_model)
-        print('attn2', attn2.shape)
         attn2 = self.dropout2(attn2, training=training)
         out2 = attn2 + out1  # (batch_size, target_seq_len, d_model)
 
         normed_out2 = self.layernorm3(out2)
         ffn_output = self.ffn(normed_out2)  # (batch_size, target_seq_len, d_model)
         ffn_output = self.dropout3(ffn_output, training=training)
-        print('ffn_output', ffn_output.shape)
         out3 = ffn_output + out2  # (batch_size, target_seq_len, d_model)
-        print('out3', out3.shape)
 
         return out3, attn_weights_block1, attn_weights_block2
 
@@ -162,14 +157,11 @@ class Encoder(tf.keras.layers.Layer):
         self.dropout = tf.keras.layers.Dropout(dropout)
 
     def call(self, x, training, mask):
-        print('x : ',x)
 
         seq_len = tf.shape(x)[1]
-        print('seq_len : ',seq_len)
 
         # adding embedding and position encoding.
         x = self.embedding(x)  # (batch_size, input_seq_len, d_model)
-        print('embedded : ',x.shape)
         
         x *= tf.math.sqrt(tf.cast(self.d_model, tf.float32))
         x += self.pos_encoding[:, :seq_len, :]
@@ -232,15 +224,11 @@ class Transformer(tf.keras.Model):
     def call(self, inp, tar, training, enc_padding_mask, look_ahead_mask, dec_padding_mask):
         # inp (4, 583, 129) -> *2 = (3, 583, 256)
         # tar (4, 584, 129)
-        print('input : ',inp.shape)
         enc_output = self.tokenizer(inp, training, enc_padding_mask)  # (batch_size, inp_seq_len, d_model)
-        print('enc_output',enc_output.shape)
 
         # dec_output.shape == (batch_size, tar_seq_len, d_model)
-        print('target : ',tar.shape)
         dec_output, attention_weights = self.decoder(
             tar, enc_output, training, look_ahead_mask, dec_padding_mask)
-        print('dec_output',enc_output.shape)
         
         final_output = self.final_layer(dec_output)  # (batch_size, tar_seq_len, target_vocab_size)
 
@@ -266,7 +254,6 @@ class TransformerSpeechSep(tf.keras.Model):
         #print('mask_output',final_output.shape)
         
         #final_output = self.mtp([final_output[:,:-1,:], inputs])
-        print('final_output',final_output.shape)
         # added Layers for Speech Separation
         
         # Multiply with Mask creatd by Transformers
