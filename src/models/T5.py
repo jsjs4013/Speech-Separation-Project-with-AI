@@ -86,7 +86,7 @@ def train(args):
     train_step_signature = [
         tf.TensorSpec(shape=(None, None, 129), dtype=tf.float32),
         tf.TensorSpec(shape=(None, None, 258), dtype=tf.float32),
-        tf.TensorSpec(shape=(), dtype=tf.float32),
+        tf.TensorSpec(shape=(None, None), dtype=tf.float32),
     ]
 
 
@@ -119,7 +119,7 @@ def train(args):
                                         combined_mask,
                                         dec_padding_mask)
             
-            loss = MSE_Custom_Loss(tar_real, predictions, loss_object)
+            loss = MSE_Custom_Loss(tar_real, predictions, length, loss_object)
             
         gradients = tape.gradient(loss, transformer.trainable_variables)
         optimizer.apply_gradients(zip(gradients, transformer.trainable_variables))
