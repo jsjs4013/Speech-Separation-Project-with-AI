@@ -14,7 +14,7 @@ def MSE_Custom_Loss(real, pred, length):
     mask = tf.cast(mask, dtype=loss_.dtype)
     loss_ *= mask
 
-    return tf.reduce_sum(loss_)#/tf.reduce_sum(mask)
+    return tf.reduce_sum(loss_)/tf.reduce_sum(mask)
 
 def MSE_Custom_Loss_No_Length(real, pred):
     # pred = (batch, seq_len, output_size)
@@ -29,7 +29,7 @@ def MSE_Custom_Loss_No_Length(real, pred):
     mask = tf.cast(mask, dtype=loss_.dtype)
     loss_ *= mask
 
-    return tf.reduce_sum(loss_)#/tf.reduce_sum(mask)
+    return tf.reduce_sum(loss_)/tf.reduce_sum(mask)
 
 if __name__ == "__main__":
     real = tf.constant([

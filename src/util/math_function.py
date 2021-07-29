@@ -20,12 +20,17 @@ def positional_encoding(position, d_model):
 
     return tf.cast(pos_encoding, dtype=tf.float32)
 
-def create_padding_mask(seq, length): 
+def create_padding_mask(seq, length=None): 
     # (batch, seq_len, input_size)
     # seq = (batch, 1, 1, seq_len)
     # seq[:, :length]
     # length (batch, 1)
-    mask = 1 - tf.cast(tf.sequence_mask(tf.squeeze(length), tf.shape(seq)[1]), tf.float32)
+    if length is None:
+        padding = tf.zeros([1,tf.shape(seq)[-1]], tf.float32)
+        not_equal_t = tf.equal(padding, seq)
+        mask = 1 - tf.math.logical_not(tf.math.reduce_all(not_equal_t, axis=2))
+    else:
+        mask = 1 - tf.cast(tf.sequence_mask(tf.squeeze(length), tf.shape(seq)[1]), tf.float32)
     # (batch_size, 1, seq_len)
     
     #seq = tf.cast(tf.math.equal(seq,0), tf.float32)
