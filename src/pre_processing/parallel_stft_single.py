@@ -1,5 +1,6 @@
 import tensorflow as tf
 import string
+sys.path.append(os.path.dirname(os.path.abspath(os.path.dirname(__file__))))
 
 import multiprocessing
 import tensorflow as tf
@@ -17,6 +18,7 @@ sys.path.append('.')
 import threading
 from math import ceil
 from tqdm.auto import tqdm
+from util.global_function import mkdir_p
 
 
 #/home/aimaster/lab_storage/Datasets/LibriMix/MixedData/Libri2Mix/wav8k/max/
@@ -27,14 +29,6 @@ list_dir = '/home/aimaster/lab_storage/Datasets/LibriMix/MixedData/Libri2Mix/'
 tfrecord_dir = '/home/aimaster/lab_storage/Datasets/LibriMix/MixedData/Libri2Mix/'
 gender_list = ''#'./wsj0-train-spkrinfo.txt'
 process_num = 8
-
-def mkdir_p(path):
-    """ Creates a path recursively without throwing an error if it already exists
-    :param path: path to create
-    :return: None
-    """
-    if not os.path.exists(path):
-        os.makedirs(path)
 
 def segment_axis(a, length, overlap=0, axis=None, end='cut', endvalue=0):
     """Generate a new array that chops the given array along the given axis into overlapping frames.
@@ -402,8 +396,8 @@ def main():
                 
                 
                 # Make tfrecords files
-                mkdir_p(tfrecord_dir + files + '_tfrecord2') # tfrecord_dir 폴더 만드는 코드
-                mkdir_p(tfrecord_dir + files + '_one_source_tfrecord2') # tfrecord_dir 폴더 만드는 코드
+                mkdir_p(tfrecord_dir + files + '_tfrecord') # tfrecord_dir 폴더 만드는 코드
+                mkdir_p(tfrecord_dir + files + '_one_source_tfrecord') # tfrecord_dir 폴더 만드는 코드
                 threads.append(threading.Thread(target=gen_feats_total, args=(lines, sample_rate, window_size, window_shift, files, tfrecord_dir, target_wav_dir, max_len, CASE)))
     
 
