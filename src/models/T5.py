@@ -10,7 +10,7 @@ import scipy
 import numpy as np
 from util.global_function import mkdir_p
 from util.math_function import create_padding_mask, create_look_ahead_mask
-from losses.custom_loss import mse_with_proper_loss, MSE_Custom_Loss_No_Length
+from losses.custom_loss import mse_with_proper_loss, MSE_Custom_Loss_No_Length, pit_with_outputsize
 from Layers import TransformerSpeechSep
 from Schedulers import CustomSchedule
 from pre_processing.data_pre_processing import load_data
@@ -59,7 +59,7 @@ class CustomModel(tf.keras.Model):
         startMask = tf.cast(tf.fill([tf.shape(tar)[0], 1, tf.shape(tar)[-1]],-1),dtype=tf.float32)
         tar = tf.concat([startMask, tar],1)
 
-        tar_inp = tar[:, :-1, :]
+        tar_inp = tar[:, :-2, :]
         tar_real = tar[:, 1:, :]
 
         """
@@ -86,7 +86,7 @@ class CustomModel(tf.keras.Model):
         startMask = tf.cast(tf.fill([tf.shape(tar)[0], 1, tf.shape(tar)[-1]],-1),dtype=tf.float32)
         tar = tf.concat([startMask, tar],1)
 
-        tar_inp = tar[:, :-1, :]
+        tar_inp = tar[:, :-2, :]
         tar_real = tar[:, 1:, :]
 
         y_pred = self((inp, tar_inp, length), training=False)
@@ -138,7 +138,8 @@ def build_T5(input_size, output_size, args):
     optimizer = tf.keras.optimizers.Adam(learning_rate, beta_1=0.9, beta_2=0.98,
                                     epsilon=1e-9)
     #model.add_metric(tf.keras.metrics.Mean(name='train_loss')(outputs))
-    model.compile(loss=mse_with_proper_loss(output_size), optimizer=optimizer)
+    #model.compile(loss=mse_with_proper_loss(output_size), optimizer=optimizer)
+    model.compile(loss=pit_with_outputsize(output_size), optimizer=optimizer)
 #     model.compile(loss=keras.losses.mean_squared_error, optimizer=adam)
 
     return model
@@ -165,7 +166,7 @@ def train_model(args):
 
     epoch = args.n_epochs
 
-    strategy = tf.distribute.MirroredStrategy(devices=['/gpu:0', '/gpu:1','/gpu:4','/gpu:5','/gpu:6',]) # '/gpu:0','/gpu:1','/gpu:2','/gpu:4','/gpu:5','/gpu:6','/gpu:7'
+    strategy = tf.distribute.MirroredStrategy() # '/gpu:0','/gpu:1','/gpu:2','/gpu:4','/gpu:5','/gpu:6','/gpu:7'
     print('장치의 수: {}'.format(strategy.num_replicas_in_sync))
 
     with strategy.scope():
@@ -359,7 +360,6 @@ def predict(args):
             for i in range(args.batch_size):
                 if i >= input_batch.shape[0]:
                     check = -1
-                    
                     break
                 else:
                     wav_name = name[i][0].numpy().decode('utf-8')
@@ -390,7 +390,7 @@ def main():
     args = Config( 2048      , 64      , 512              , 0.1 , "gated_gelu", 4       , 
                 1e-06    , "t5"             , 8 , "absolute" , 10     , 129   ,
                 "CKPT", "wav8k", "min", "train-360", "mse", "inverse_root",
-                129, 258, 25, 'mixed', 'C:/J_and_J_Research/mycode/CKPT', 
+                129, 129, 25, 'mixed', 'C:/J_and_J_Research/mycode/CKPT', 
                 'C:/J_and_J_Research/mycode/tfrecords/tr_tfrecord', 
                 'C:/J_and_J_Research/mycode/tfrecords/cv_tfrecord',
                 'C:/J_and_J_Research/mycode/tfrecords/tt_tfrecords_real', 

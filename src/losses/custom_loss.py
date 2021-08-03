@@ -32,7 +32,8 @@ def pit_with_outputsize(output_size):
         labels = tf.slice(y_true, [0, 0, 0], [-1, ori_length-1, -1]) # [batch_size, length_size, 129]
         lengths = tf.slice(y_true, [0, ori_length-1, 0], [-1, -1, 1]) # [batch_size, 1, 1]
         
-        mask = tf.cast(tf.sequence_mask(tf.squeeze(lengths), tf.shape(pred)[1]), tf.float32)
+        mask = tf.cast(tf.sequence_mask(tf.squeeze(lengths), tf.shape(y_pred)[1]), tf.float32)
+        print(tf.shape(mask))
 
         # Label value slice
         labels1 = tf.slice(labels, [0, 0, 0], [-1, -1, output_size])
@@ -43,8 +44,14 @@ def pit_with_outputsize(output_size):
         pred2 = tf.slice(y_pred, [0, 0, output_size], [-1, -1, -1])
 
         # Permute calculate (batch, seqlen, 258) mask = (batch, seq_len)
-        cost1 = tf.reduce_mean(tf.reduce_sum(tf.pow(pred1 - labels1, 2) , 1) * mask  + tf.reduce_sum(tf.pow(pred2 - labels2, 2) , 1) * mask, 1)
-        cost2 = tf.reduce_mean(tf.reduce_sum(tf.pow(pred2 - labels1, 2) , 1) * mask  + tf.reduce_sum(tf.pow(pred1 - labels2, 2) , 1) * mask, 1)
+        c1 = tf.pow(pred1 - labels1, 2)
+        c2 = tf.pow(pred2 - labels2, 2)
+        c4 = tf.pow(pred1 - labels2, 2)
+        c3 = tf.pow(pred2 - labels1, 2)
+        cost1 = tf.reduce_sum(c1, 2) * mask + tf.reduce_sum(c2, 2) * mask
+        cost1 = tf.reduce_mean(cost1)
+        cost2 = tf.reduce_sum(c3, 2) * mask + tf.reduce_sum(c4, 2) * mask
+        cost2 = tf.reduce_mean(cost2)
 
         idx = tf.cast(cost1 > cost2, tf.float32) 
         pit_loss = tf.reduce_sum(idx * cost2 + (1 - idx) * cost1)
