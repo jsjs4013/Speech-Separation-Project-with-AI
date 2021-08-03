@@ -138,7 +138,7 @@ def build_T5(input_size, output_size, args):
     optimizer = tf.keras.optimizers.Adam(learning_rate, beta_1=0.9, beta_2=0.98,
                                     epsilon=1e-9)
     #model.add_metric(tf.keras.metrics.Mean(name='train_loss')(outputs))
-    model.compile(loss=mse_with_proper_loss(tf.squeeze(length)), optimizer=optimizer)
+    model.compile(loss=mse_with_proper_loss(output_size), optimizer=optimizer)
 #     model.compile(loss=keras.losses.mean_squared_error, optimizer=adam)
 
     return model
@@ -388,14 +388,14 @@ def main():
                     "input_size, output_size, batch_size, case, ckpt_path, tr_path, val_path, tt_path,"
                     "test_wav_dir, is_load_model")
     args = Config( 2048      , 64      , 512              , 0.1 , "gated_gelu", 4       , 
-                1e-06    , "t5"             , 8 , "absolute" , 200     , 129   ,
+                1e-06    , "t5"             , 8 , "absolute" , 10     , 129   ,
                 "CKPT", "wav8k", "min", "train-360", "mse", "inverse_root",
-                129, 258, 56, 'mixed', '/home/aimaster/lab_storage/models/Librimix/wav8k/min/T5_CKPT_loss_fix', 
-                '/home/aimaster/lab_storage/Datasets/LibriMix/MixedData/Libri2Mix/wav8k/min/train-360/train-360_tfrecord', 
-                '/home/aimaster/lab_storage/Datasets/LibriMix/MixedData/Libri2Mix/wav8k/min/dev/dev_tfrecord', 
-                '/home/aimaster/lab_storage/Datasets/LibriMix/MixedData/Libri2Mix/wav8k/min/test/test_tfrecord',
-                '/home/aimaster/lab_storage/models/Librimix/wav8k/min/T5_CKPT_Result_epoch34',
-                True)
+                129, 258, 25, 'mixed', 'C:/J_and_J_Research/mycode/CKPT', 
+                'C:/J_and_J_Research/mycode/tfrecords/tr_tfrecord', 
+                'C:/J_and_J_Research/mycode/tfrecords/cv_tfrecord',
+                'C:/J_and_J_Research/mycode/tfrecords/tt_tfrecords_real', 
+                'C:/J_and_J_Research/mycode/test_wav',
+                False)
     print("hello World!")
     train_model(args)
 

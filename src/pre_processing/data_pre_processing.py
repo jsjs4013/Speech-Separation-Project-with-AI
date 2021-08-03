@@ -59,10 +59,12 @@ def read_tfrecord(example, input_size=129*2, output_size=129*2, check='train', c
     if case == 'mixed':
         inputs, angle = data_preprocessing(example["inputs"], 'inputs', input_size)
     #     label1, label2 = data_preprocessing(example["labels"], 'labels', input_size)
+    
+        tiled = tf.tile(tf.expand_dims(example['length'], 1), [1, input_size])
 
         if check == "test":
             return inputs, angle, example['labels'], example['name'], example['length']
-        return inputs, example['labels'], example['length']
+        return inputs, tf.concat([example['labels'], tiled], 0), example['length']
     
     else:
         if check == "test":
