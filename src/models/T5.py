@@ -10,12 +10,13 @@ import scipy
 import numpy as np
 from util.global_function import mkdir_p
 from util.math_function import create_padding_mask, create_look_ahead_mask
-from losses.custom_loss import MSE_Custom_Loss, MSE_Custom_Loss_No_Length
+from losses.custom_loss import mse_with_proper_loss, MSE_Custom_Loss_No_Length
 from Layers import TransformerSpeechSep
 from Schedulers import CustomSchedule
 from pre_processing.data_pre_processing import load_data
 
 from util.audio_utils import istft, audiowrite
+from tqdm.auto import tqdm
 
 BATCH_SIZE = 25
 INPUT_SIZE = 129
@@ -44,8 +45,6 @@ def create_masks(inp, tar, length=None):
 
     return enc_padding_mask, combined_mask, dec_padding_mask
 
-def mse_with_proper_loss(output_size):
-    return MSE_Custom_Loss_No_Length
 
 class CustomModel(tf.keras.Model):
     def train_step(self, data):
@@ -139,7 +138,7 @@ def build_T5(input_size, output_size, args):
     optimizer = tf.keras.optimizers.Adam(learning_rate, beta_1=0.9, beta_2=0.98,
                                     epsilon=1e-9)
     #model.add_metric(tf.keras.metrics.Mean(name='train_loss')(outputs))
-    model.compile(loss=mse_with_proper_loss(output_size), optimizer=optimizer)
+    model.compile(loss=mse_with_proper_loss(tf.squeeze(length)), optimizer=optimizer)
 #     model.compile(loss=keras.losses.mean_squared_error, optimizer=adam)
 
     return model
@@ -166,7 +165,7 @@ def train_model(args):
 
     epoch = args.n_epochs
 
-    strategy = tf.distribute.MirroredStrategy()
+    strategy = tf.distribute.MirroredStrategy(devices=['/gpu:0', '/gpu:1','/gpu:4','/gpu:5','/gpu:6',]) # '/gpu:0','/gpu:1','/gpu:2','/gpu:4','/gpu:5','/gpu:6','/gpu:7'
     print('장치의 수: {}'.format(strategy.num_replicas_in_sync))
 
     with strategy.scope():
@@ -174,6 +173,8 @@ def train_model(args):
     #     model = load_model('./CKPT/CKP_ep_29__loss_102.63367_.h5', custom_objects={'pit_loss': pit_with_outputsize(OUTPUT_SIZE)})
         
         model = build_T5(args.input_size, args.output_size, args)
+        #if args.is_load_model is True:
+            
         tf.executing_eagerly()
 
     history = model.fit(
@@ -307,6 +308,7 @@ def evaluate(inp, transformer, length=None, max_length=1800):
     zero_clipping = tf.constant([0.])
     print("output:",output)
 
+    progress_bar = tqdm(range(max_length))
     for i in range(max_length):
         # predictions.shape == (batch_size, seq_len, vocab_size)
         predictions = transformer((encoder_input, output, length), training=False)
@@ -319,6 +321,7 @@ def evaluate(inp, transformer, length=None, max_length=1800):
         # concatentate the predicted_id to the output which is given to the decoder
         # as its input.
         output = tf.concat([output, predicted_id], axis=1)
+        progress_bar.update(1)
 
     return output
 
@@ -329,50 +332,52 @@ def predict(args):
     sample_rate = 8000
     window_size = 256
     window_shift = 128
-    ckpt_path = args.ckpt_path
-    model_path = ckpt_path + "/CKP_ep_79__loss_70863.60156_.h5"
 
-    model = build_T5(args.input_size, args.output_size, args)
-    model.load_weights(model_path)
+    with tf.device('/gpu:7'):
+        ckpt_path = args.ckpt_path
+        model_path = ckpt_path + "/CKP_ep_34__loss_104955.03906_.h5"
 
-    cnt = 0
-    check = 0
-    for batch in test_dataset:
-        input_batch, angle_batch, label_batch, name, length = batch
-        tf.executing_eagerly() # requires r1.7
-        angle_numpy = tf.constant(angle_batch)
-        angle_numpy = angle_numpy.numpy()
-        
-        result = evaluate(input_batch, model, length, max_length=1800)
-        result = result[:,1:,:]
-        label1 = tf.slice(result, [0, 0, 0], [-1, -1, OUTPUT_SIZE])
-        label2 = tf.slice(result, [0, 0, OUTPUT_SIZE], [-1, -1, -1])
-        spec1 = label1 * np.exp(angle_numpy * 1j)
-        spec2 = label2 * np.exp(angle_numpy * 1j)
+        model = build_T5(args.input_size, args.output_size, args)
+        model.load_weights(model_path)
 
-        num = cnt * BATCH_SIZE
-        for i in range(BATCH_SIZE):
-            if i >= input_batch.shape[0]:
-                check = -1
-                
+        cnt = 0
+        check = 0
+        for batch in test_dataset:
+            input_batch, angle_batch, label_batch, name, length = batch
+            tf.executing_eagerly() # requires r1.7
+            angle_numpy = tf.constant(angle_batch)
+            angle_numpy = angle_numpy.numpy()
+            
+            result = evaluate(input_batch, model, length, max_length=1800)
+            result = result[:,1:,:]
+            label1 = tf.slice(result, [0, 0, 0], [-1, -1, OUTPUT_SIZE])
+            label2 = tf.slice(result, [0, 0, OUTPUT_SIZE], [-1, -1, -1])
+            spec1 = label1 * np.exp(angle_numpy * 1j)
+            spec2 = label2 * np.exp(angle_numpy * 1j)
+
+            num = cnt * args.batch_size
+            for i in range(args.batch_size):
+                if i >= input_batch.shape[0]:
+                    check = -1
+                    
+                    break
+                else:
+                    wav_name = name[i][0].numpy().decode('utf-8')
+
+                    wav_name1 = args.test_wav_dir + '/' + wav_name + '_s1.wav'
+                    wav_name2 = args.test_wav_dir + '/' + wav_name + '_s2.wav'
+                    wav1 = istft(spec1[i, 0:input_batch[i].shape[0], :], size=window_size, shift=window_shift)
+                    wav2 = istft(spec2[i, 0:input_batch[i].shape[0], :], size=window_size, shift=window_shift)
+                    audiowrite(wav1, wav_name1, sample_rate, True, True)
+                    audiowrite(wav2, wav_name2, sample_rate, True, True)
+            
+            if check == -1:
                 break
-            else:
-                wav_name = name[i][0].numpy().decode('utf-8')
 
-                wav_name1 = args.test_wav_dir + '/' + wav_name + '_s1.wav'
-                wav_name2 = args.test_wav_dir + '/' + wav_name + '_s2.wav'
-                wav1 = istft(spec1[i, 0:input_batch[i].shape[0], :], size=window_size, shift=window_shift)
-                wav2 = istft(spec2[i, 0:input_batch[i].shape[0], :], size=window_size, shift=window_shift)
-                audiowrite(wav1, wav_name1, sample_rate, True, True)
-                audiowrite(wav2, wav_name2, sample_rate, True, True)
-        
-        if check == -1:
-            break
+            if (cnt + 1) % 10 == 0:
+                print((cnt + 1) * args.batch_size)
 
-        if (cnt + 1) % 10 == 0:
-            print((cnt + 1) * BATCH_SIZE)
-
-        cnt += 1
+            cnt += 1
 
 
 def main():
@@ -381,18 +386,20 @@ def main():
                 "layer_norm_epsilon, model_type, num_heads, positional_embedding, n_epochs, vocab_size,"
                     "model_path, wav_type, size_type, train_type, loss_type, learning_rate_type,"
                     "input_size, output_size, batch_size, case, ckpt_path, tr_path, val_path, tt_path,"
-                    "test_wav_dir")
+                    "test_wav_dir, is_load_model")
     args = Config( 2048      , 64      , 512              , 0.1 , "gated_gelu", 4       , 
-                1e-06    , "t5"             , 8 , "absolute" , 10     , 129   ,
+                1e-06    , "t5"             , 8 , "absolute" , 200     , 129   ,
                 "CKPT", "wav8k", "min", "train-360", "mse", "inverse_root",
-                129, 258, 25, 'mixed', 'C:/J_and_J_Research/mycode/CKPT', 
-                'C:/J_and_J_Research/mycode/tfrecords/tr_tfrecord', 
-                'C:/J_and_J_Research/mycode/tfrecords/cv_tfrecord',
-                'C:/J_and_J_Research/mycode/tfrecords/tt_tfrecords_real', 
-                'C:/J_and_J_Research/mycode/test_wav')
+                129, 258, 56, 'mixed', '/home/aimaster/lab_storage/models/Librimix/wav8k/min/T5_CKPT_loss_fix', 
+                '/home/aimaster/lab_storage/Datasets/LibriMix/MixedData/Libri2Mix/wav8k/min/train-360/train-360_tfrecord', 
+                '/home/aimaster/lab_storage/Datasets/LibriMix/MixedData/Libri2Mix/wav8k/min/dev/dev_tfrecord', 
+                '/home/aimaster/lab_storage/Datasets/LibriMix/MixedData/Libri2Mix/wav8k/min/test/test_tfrecord',
+                '/home/aimaster/lab_storage/models/Librimix/wav8k/min/T5_CKPT_Result_epoch34',
+                True)
     print("hello World!")
-    #train_model(args)
-    predict(args)
+    train_model(args)
+
+    #predict(args)
 
 if __name__ == "__main__":
     main()

@@ -9,7 +9,7 @@ from util.global_function import mkdir_p
 from pre_processing.data_pre_processing import load_data
 from scipy import signal
 from scipy.io.wavfile import write as wav_write
-
+from numpy.fft import rfft, irfft
 
 def _biorthogonal_window_loopy(analysis_window, shift):
     """
