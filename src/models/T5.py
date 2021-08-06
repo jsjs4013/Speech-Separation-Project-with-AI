@@ -60,6 +60,9 @@ class CustomModel(tf.keras.Model):
         tar = tf.concat([startMask, tar],1)
 
         tar_inp = tar[:, :-2, :]
+        s1_target = tf.slice(tar_inp, [0, 0, 0], [-1, -1, 129])
+        s2_target = tf.slice(tar_inp, [0, 0, 129], [-1, -1, -1])
+        tar_inp2 = tf.concat([s1_target, s2_target], -1)
         tar_real = tar[:, 1:, :]
 
         """
@@ -69,17 +72,20 @@ class CustomModel(tf.keras.Model):
         combined_mask = tf.repeat(combined_mask, tf.shape(tar_inp)[0], 0)
         """
         with tf.GradientTape() as tape:
-            predictions = self((inp, tar_inp, length), training=True)
+            predictions1 = self((inp, tar_inp, length), training=True)
+            predictions2 = self((inp, tar_inp2, length), training=True)
+            real_predict = tf.concat([predictions1, predictions2], 0)
             
-            loss = self.compiled_loss(tar_real, predictions, regularization_losses=self.losses)
-            
+            loss = self.compiled_loss(tar_real, real_predict, regularization_losses=self.losses)
+        
         gradients = tape.gradient(loss, self.trainable_variables)
         self.optimizer.apply_gradients(zip(gradients, self.trainable_variables))
 
-        self.compiled_metrics.update_state(tar_real, predictions)
+        self.compiled_metrics.update_state(tar_real, real_predict)
 
         return {m.name: m.result() for m in self.metrics}
         #train_accuracy(accuracy_function(tar_real, predictions))
+
 
     def test_step(self, data):
         inp, tar, length = data
@@ -87,6 +93,9 @@ class CustomModel(tf.keras.Model):
         tar = tf.concat([startMask, tar],1)
 
         tar_inp = tar[:, :-2, :]
+        s1_target = tf.slice(tar_inp, [0, 0, 0], [-1, -1, 129])
+        s2_target = tf.slice(tar_inp, [0, 0, 129], [-1, -1, -1])
+        tar_inp2 = tf.concat([s1_target, s2_target], -1)
         tar_real = tar[:, 1:, :]
 
         """
@@ -114,11 +123,14 @@ class CustomModel(tf.keras.Model):
             i = i + 1
         """
 
-        y_pred = self((inp, tar_inp, length), training=False)
-        # Updates stateful loss metrics.
-        self.compiled_loss(tar_real, y_pred, regularization_losses=self.losses)
+        predictions1 = self((inp, tar_inp, length), training=True)
+        predictions2 = self((inp, tar_inp2, length), training=True)
+        real_predict = tf.concat([predictions1, predictions2], 0)
 
-        self.compiled_metrics.update_state(tar_real, y_pred)
+        # Updates stateful loss metrics.
+        self.compiled_loss(tar_real, real_predict, regularization_losses=self.losses)
+
+        self.compiled_metrics.update_state(tar_real, real_predict)
         # Collect metrics to return
         return {m.name: m.result() for m in self.metrics}
 
@@ -191,7 +203,7 @@ def train_model(args):
 
     epoch = args.n_epochs
 
-    strategy = tf.distribute.MirroredStrategy(['/gpu:0','/gpu:1','/gpu:2','/gpu:4','/gpu:5','/gpu:6','/gpu:7']) # '/gpu:0','/gpu:1','/gpu:2','/gpu:4','/gpu:5','/gpu:6','/gpu:7'
+    strategy = tf.distribute.MirroredStrategy() # '/gpu:0','/gpu:1','/gpu:2','/gpu:4','/gpu:5','/gpu:6','/gpu:7'
     print('장치의 수: {}'.format(strategy.num_replicas_in_sync))
 
     with strategy.scope():
@@ -415,16 +427,16 @@ def main():
     args = Config( 2048      , 64      , 512              , 0.1 , "gated_gelu", 4       , 
                 1e-06    , "t5"             , 8 , "absolute" , 200     , 129   ,
                 "CKPT", "wav8k", "min", "train-360", "mse", "inverse_root",
-                129, 129, 8, 'mixed', '/home/aimaster/lab_storage/models/Librimix/wav8k/min/T5_CKPT_mse_real_loss', 
-                '/home/aimaster/lab_storage/Datasets/LibriMix/MixedData/Libri2Mix/wav8k/min/train-360/train-360_tfrecord', 
-                '/home/aimaster/lab_storage/Datasets/LibriMix/MixedData/Libri2Mix/wav8k/min/dev/dev_tfrecord', 
-                '/home/aimaster/lab_storage/Datasets/LibriMix/MixedData/Libri2Mix/wav8k/min/test/test_tfrecord',
-                '/home/aimaster/lab_storage/models/Librimix/wav8k/min/T5_CKPT_mse_real_result_epoch187',
+                129, 129, 25, 'mixed', 'C:/J_and_J_Research/mycode/CKPT', 
+                'C:/J_and_J_Research/mycode/tfrecords/tr_tfrecord', 
+                'C:/J_and_J_Research/mycode/tfrecords/cv_tfrecord',
+                'C:/J_and_J_Research/mycode/tfrecords/tt_tfrecords_real', 
+                'C:/J_and_J_Research/mycode/test_wav',
                 True)
     print("hello World!")
-    #train_model(args)
+    train_model(args)
 
-    predict(args)
+    #predict(args)
 
 if __name__ == "__main__":
     main()
