@@ -89,6 +89,31 @@ class CustomModel(tf.keras.Model):
         tar_inp = tar[:, :-2, :]
         tar_real = tar[:, 1:, :]
 
+        """
+        encoder_input = inp
+        max_length = tf.shape(tar_inp)[1]
+        
+        # as the target is english, the first word to the transformer should be the
+        # english start token.
+        # start here
+        i = 0
+        output = startMask
+        zero_clipping = tf.constant([0.])
+        while i < max_length :
+            # predictions.shape == (batch_size, seq_len, vocab_size)
+            predictions = self((encoder_input, output, length), training=False)
+
+            # select the last word from the seq_len dimension
+            predictions = predictions[:, -1:, :]  # (batch_size, 1, vocab_size)
+            predictions = tf.math.maximum(predictions, zero_clipping)
+            predicted_id = predictions
+
+            # concatentate the predicted_id to the output which is given to the decoder
+            # as its input.
+            output = tf.concat([output, predicted_id], axis=1)
+            i = i + 1
+        """
+
         y_pred = self((inp, tar_inp, length), training=False)
         # Updates stateful loss metrics.
         self.compiled_loss(tar_real, y_pred, regularization_losses=self.losses)
@@ -166,7 +191,7 @@ def train_model(args):
 
     epoch = args.n_epochs
 
-    strategy = tf.distribute.MirroredStrategy() # '/gpu:0','/gpu:1','/gpu:2','/gpu:4','/gpu:5','/gpu:6','/gpu:7'
+    strategy = tf.distribute.MirroredStrategy(['/gpu:0','/gpu:1','/gpu:2','/gpu:4','/gpu:5','/gpu:6','/gpu:7']) # '/gpu:0','/gpu:1','/gpu:2','/gpu:4','/gpu:5','/gpu:6','/gpu:7'
     print('장치의 수: {}'.format(strategy.num_replicas_in_sync))
 
     with strategy.scope():
@@ -334,9 +359,9 @@ def predict(args):
     window_size = 256
     window_shift = 128
 
-    with tf.device('/gpu:7'):
+    with tf.device('/gpu:6'):
         ckpt_path = args.ckpt_path
-        model_path = ckpt_path + "/CKP_ep_34__loss_104955.03906_.h5"
+        model_path = ckpt_path + "/CKP_ep_187__loss_10.08807_.h5"
 
         model = build_T5(args.input_size, args.output_size, args)
         model.load_weights(model_path)
@@ -388,18 +413,18 @@ def main():
                     "input_size, output_size, batch_size, case, ckpt_path, tr_path, val_path, tt_path,"
                     "test_wav_dir, is_load_model")
     args = Config( 2048      , 64      , 512              , 0.1 , "gated_gelu", 4       , 
-                1e-06    , "t5"             , 8 , "absolute" , 10     , 129   ,
+                1e-06    , "t5"             , 8 , "absolute" , 200     , 129   ,
                 "CKPT", "wav8k", "min", "train-360", "mse", "inverse_root",
-                129, 129, 25, 'mixed', 'C:/J_and_J_Research/mycode/CKPT', 
-                'C:/J_and_J_Research/mycode/tfrecords/tr_tfrecord', 
-                'C:/J_and_J_Research/mycode/tfrecords/cv_tfrecord',
-                'C:/J_and_J_Research/mycode/tfrecords/tt_tfrecords_real', 
-                'C:/J_and_J_Research/mycode/test_wav',
-                False)
+                129, 129, 8, 'mixed', '/home/aimaster/lab_storage/models/Librimix/wav8k/min/T5_CKPT_mse_real_loss', 
+                '/home/aimaster/lab_storage/Datasets/LibriMix/MixedData/Libri2Mix/wav8k/min/train-360/train-360_tfrecord', 
+                '/home/aimaster/lab_storage/Datasets/LibriMix/MixedData/Libri2Mix/wav8k/min/dev/dev_tfrecord', 
+                '/home/aimaster/lab_storage/Datasets/LibriMix/MixedData/Libri2Mix/wav8k/min/test/test_tfrecord',
+                '/home/aimaster/lab_storage/models/Librimix/wav8k/min/T5_CKPT_mse_real_result_epoch187',
+                True)
     print("hello World!")
-    train_model(args)
+    #train_model(args)
 
-    #predict(args)
+    predict(args)
 
 if __name__ == "__main__":
     main()
