@@ -3,6 +3,7 @@ import museval
 import os
 import librosa
 import numpy as np
+from tqdm.auto import tqdm
 
 def wavread(path):
     wav, sample_rate = sf.read(path, dtype='float32')
@@ -34,12 +35,13 @@ def permute_si_sdr(ref1, ref2, est1, est2):
         return sdr2 * 0.5
 
 def eval_si_sdr(wav_dir, test_dir):
-    wav_files = os.listdir(wav_dir + 'tt/mix')
+    wav_files = os.listdir(wav_dir + '/mix_clean')
 
     si_sdr_list = []
+    progress_bar = tqdm(range(len(wav_files)))
     for name in wav_files:
-        ref_s1, _ = wavread(wav_dir + 'tt/s1/' + name)
-        ref_s2, _ = wavread(wav_dir + 'tt/s2/' + name)
+        ref_s1, _ = wavread(wav_dir + '/s1/' + name)
+        ref_s2, _ = wavread(wav_dir + '/s2/' + name)
         est_s1, _ = wavread(test_dir + name[:-4] + '_s1.wav')
         est_s2, _ = wavread(test_dir + name[:-4] + '_s2.wav')
 
@@ -49,18 +51,20 @@ def eval_si_sdr(wav_dir, test_dir):
 
         si_sdr_value = permute_si_sdr(ref_s1, ref_s2, est_s1, est_s2)
         si_sdr_list.append(si_sdr_value)
+        progress_bar.update(1)
 
     mean_si_sdr = np.mean(np.array(si_sdr_list))
 
     return mean_si_sdr
 
 def eval_sdr(wav_dir, test_dir):
-    wav_files = os.listdir(wav_dir + 'tt/mix')
+    wav_files = os.listdir(wav_dir + '/mix_clean')
 
     si_sdr_list = []
+    progress_bar = tqdm(range(len(wav_files)))
     for name in wav_files:
-        ref_s1, _ = wavread(wav_dir + 'tt/s1/' + name)
-        ref_s2, _ = wavread(wav_dir + 'tt/s2/' + name)
+        ref_s1, _ = wavread(wav_dir + '/s1/' + name)
+        ref_s2, _ = wavread(wav_dir + '/s2/' + name)
         est_s1, _ = wavread(test_dir + name[:-4] + '_s1.wav')
         est_s2, _ = wavread(test_dir + name[:-4] + '_s2.wav')
 
@@ -86,7 +90,20 @@ def eval_sdr(wav_dir, test_dir):
             sdr = np.mean(np.nan_to_num(sdr_back))
 
         si_sdr_list.append(sdr)
+        progress_bar.update(1)
 
     mean_sdr = np.mean(np.array(si_sdr_list))
 
     return mean_sdr
+
+def main():
+    wav_dir = '/home/aimaster/lab_storage/Datasets/LibriMix/MixedData/Libri2Mix/wav8k/min/test/'
+    test_dir = '/home/aimaster/lab_storage/models/Librimix/wav8k/min/BASELINE_upit_dropout0.3_epoch132/'
+    si_sdr = eval_si_sdr(wav_dir, test_dir)
+    sdr = eval_sdr(wav_dir, test_dir)
+
+    print("The SI-SDR (db) :", si_sdr)
+    print("The SDR (db) :", sdr)
+
+if __name__ == "__main__" :
+    main()

@@ -62,7 +62,7 @@ class CustomModel(tf.keras.Model):
         tar_inp = tar[:, :-2, :]
         s1_target = tf.slice(tar_inp, [0, 0, 0], [-1, -1, 129])
         s2_target = tf.slice(tar_inp, [0, 0, 129], [-1, -1, -1])
-        tar_inp2 = tf.concat([s1_target, s2_target], -1)
+        tar_inp2 = tf.concat([s2_target, s1_target], -1)
         tar_real = tar[:, 1:, :]
 
         """
@@ -95,7 +95,7 @@ class CustomModel(tf.keras.Model):
         tar_inp = tar[:, :-2, :]
         s1_target = tf.slice(tar_inp, [0, 0, 0], [-1, -1, 129])
         s2_target = tf.slice(tar_inp, [0, 0, 129], [-1, -1, -1])
-        tar_inp2 = tf.concat([s1_target, s2_target], -1)
+        tar_inp2 = tf.concat([s2_target, s1_target], -1)
         tar_real = tar[:, 1:, :]
 
         """
@@ -123,8 +123,8 @@ class CustomModel(tf.keras.Model):
             i = i + 1
         """
 
-        predictions1 = self((inp, tar_inp, length), training=True)
-        predictions2 = self((inp, tar_inp2, length), training=True)
+        predictions1 = self((inp, tar_inp, length), training=False)
+        predictions2 = self((inp, tar_inp2, length), training=False)
         real_predict = tf.concat([predictions1, predictions2], 0)
 
         # Updates stateful loss metrics.
@@ -203,7 +203,7 @@ def train_model(args):
 
     epoch = args.n_epochs
 
-    strategy = tf.distribute.MirroredStrategy() # '/gpu:0','/gpu:1','/gpu:2','/gpu:4','/gpu:5','/gpu:6','/gpu:7'
+    strategy = tf.distribute.MirroredStrategy(['/gpu:0','/gpu:1','/gpu:2','/gpu:4','/gpu:5','/gpu:6','/gpu:7']) # '/gpu:0','/gpu:1','/gpu:2','/gpu:4','/gpu:5','/gpu:6','/gpu:7'
     print('장치의 수: {}'.format(strategy.num_replicas_in_sync))
 
     with strategy.scope():
@@ -371,13 +371,17 @@ def predict(args):
     window_size = 256
     window_shift = 128
 
-    with tf.device('/gpu:6'):
+    with tf.device('/gpu:0'):
         ckpt_path = args.ckpt_path
-        model_path = ckpt_path + "/CKP_ep_187__loss_10.08807_.h5"
+        model_path = ckpt_path + "/CKP_ep_132__loss_291.81320_.h5"
 
-        model = build_T5(args.input_size, args.output_size, args)
-        model.load_weights(model_path)
-
+        # T5 load
+        if True:
+            model = build_T5(args.input_size, args.output_size, args)
+            model.load_weights(model_path)
+        # baseline
+        if False:
+            model = load_model(model_path, custom_objects={'pit_loss': pit_with_outputsize(OUTPUT_SIZE)})
         cnt = 0
         check = 0
         for batch in test_dataset:
@@ -388,6 +392,7 @@ def predict(args):
             
             result = evaluate(input_batch, model, length, max_length=1800)
             result = result[:,1:,:]
+            #result = model.predict(input_batch)
             label1 = tf.slice(result, [0, 0, 0], [-1, -1, OUTPUT_SIZE])
             label2 = tf.slice(result, [0, 0, OUTPUT_SIZE], [-1, -1, -1])
             spec1 = label1 * np.exp(angle_numpy * 1j)
@@ -427,16 +432,27 @@ def main():
     args = Config( 2048      , 64      , 512              , 0.1 , "gated_gelu", 4       , 
                 1e-06    , "t5"             , 8 , "absolute" , 200     , 129   ,
                 "CKPT", "wav8k", "min", "train-360", "mse", "inverse_root",
+                129, 129, 25, 'mixed', '/home/aimaster/lab_storage/models/Librimix/wav8k/min/train-360_u-PIT_0.3_CKPT', 
+                '/home/aimaster/lab_storage/Datasets/LibriMix/MixedData/Libri2Mix/wav8k/min/train-360/train-360_tfrecord', 
+                '/home/aimaster/lab_storage/Datasets/LibriMix/MixedData/Libri2Mix/wav8k/min/dev/dev_tfrecord',
+                '/home/aimaster/lab_storage/Datasets/LibriMix/MixedData/Libri2Mix/wav8k/min/test/test_tfrecord', 
+                '/home/aimaster/lab_storage/models/Librimix/wav8k/min/BASELINE_upit_dropout0.3_epoch132',
+                True)
+    """
+    args = Config( 2048      , 64      , 512              , 0.1 , "gated_gelu", 4       , 
+                1e-06    , "t5"             , 8 , "absolute" , 200     , 129   ,
+                "CKPT", "wav8k", "min", "train-360", "mse", "inverse_root",
                 129, 129, 25, 'mixed', 'C:/J_and_J_Research/mycode/CKPT', 
                 'C:/J_and_J_Research/mycode/tfrecords/tr_tfrecord', 
                 'C:/J_and_J_Research/mycode/tfrecords/cv_tfrecord',
                 'C:/J_and_J_Research/mycode/tfrecords/tt_tfrecords_real', 
                 'C:/J_and_J_Research/mycode/test_wav',
-                True)
+                True) 
+    """
     print("hello World!")
-    train_model(args)
+    #train_model(args)
 
-    #predict(args)
+    predict(args)
 
 if __name__ == "__main__":
     main()
