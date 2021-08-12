@@ -17,6 +17,8 @@ from pre_processing.data_pre_processing import load_data
 
 from util.audio_utils import istft, audiowrite
 from tqdm.auto import tqdm
+from T5_variations import VainillaT5, SourceBySourceT5
+
 
 BATCH_SIZE = 25
 INPUT_SIZE = 129
@@ -46,112 +48,6 @@ def create_masks(inp, tar, length=None):
     return enc_padding_mask, combined_mask, dec_padding_mask
 
 
-class CustomModel(tf.keras.Model):
-    def train_step(self, data):
-        """print('inp',inp.shape) 
-        startMask = tf.cast(tf.fill([1,258],-1),dtype=tf.float32)
-        endMask = tf.cast(tf.fill([1,258],-2),dtype=tf.float32)
-        tar_inp = tf.concat([startMask, tar],0)
-        tar_real = tf.concat([tar, endMask],0)
-        print('tar_inp',tar_inp.shape)
-        print('tar_real',tar_real[0])"""
-        inp, tar, length = data
-        startMask = tf.cast(tf.fill([tf.shape(tar)[0], 1, tf.shape(tar)[-1]],-1),dtype=tf.float32)
-        tar = tf.concat([startMask, tar],1)
-
-        tar_inp = tar[:, :-2, :]
-        s1_target = tf.slice(tar_inp, [0, 0, 0], [-1, -1, 129])
-        s2_target = tf.slice(tar_inp, [0, 0, 129], [-1, -1, -1])
-        tar_inp2 = tf.concat([s2_target, s1_target], -1)
-        tar_real = tar[:, 1:, :]
-
-        """
-        enc_padding_mask, combined_mask, dec_padding_mask = None, None, None
-        combined_mask = create_look_ahead_mask(tf.shape(tar_inp)[1])
-        combined_mask = combined_mask[tf.newaxis, tf.newaxis, :, :]
-        combined_mask = tf.repeat(combined_mask, tf.shape(tar_inp)[0], 0)
-        """
-        with tf.GradientTape() as tape:
-            predictions1 = self((inp, tar_inp, length), training=True)
-            predictions2 = self((inp, tar_inp2, length), training=True)
-            real_predict = tf.concat([predictions1, predictions2], 0)
-            
-            loss = self.compiled_loss(tar_real, real_predict, regularization_losses=self.losses)
-        
-        gradients = tape.gradient(loss, self.trainable_variables)
-        self.optimizer.apply_gradients(zip(gradients, self.trainable_variables))
-
-        self.compiled_metrics.update_state(tar_real, real_predict)
-
-        return {m.name: m.result() for m in self.metrics}
-        #train_accuracy(accuracy_function(tar_real, predictions))
-
-
-    def test_step(self, data):
-        inp, tar, length = data
-        startMask = tf.cast(tf.fill([tf.shape(tar)[0], 1, tf.shape(tar)[-1]],-1),dtype=tf.float32)
-        tar = tf.concat([startMask, tar],1)
-
-        tar_inp = tar[:, :-2, :]
-        s1_target = tf.slice(tar_inp, [0, 0, 0], [-1, -1, 129])
-        s2_target = tf.slice(tar_inp, [0, 0, 129], [-1, -1, -1])
-        tar_inp2 = tf.concat([s2_target, s1_target], -1)
-        tar_real = tar[:, 1:, :]
-
-        """
-        encoder_input = inp
-        max_length = tf.shape(tar_inp)[1]
-        
-        # as the target is english, the first word to the transformer should be the
-        # english start token.
-        # start here
-        i = 0
-        output = startMask
-        zero_clipping = tf.constant([0.])
-        while i < max_length :
-            # predictions.shape == (batch_size, seq_len, vocab_size)
-            predictions = self((encoder_input, output, length), training=False)
-
-            # select the last word from the seq_len dimension
-            predictions = predictions[:, -1:, :]  # (batch_size, 1, vocab_size)
-            predictions = tf.math.maximum(predictions, zero_clipping)
-            predicted_id = predictions
-
-            # concatentate the predicted_id to the output which is given to the decoder
-            # as its input.
-            output = tf.concat([output, predicted_id], axis=1)
-            i = i + 1
-        """
-
-        predictions1 = self((inp, tar_inp, length), training=False)
-        predictions2 = self((inp, tar_inp2, length), training=False)
-        real_predict = tf.concat([predictions1, predictions2], 0)
-
-        # Updates stateful loss metrics.
-        self.compiled_loss(tar_real, real_predict, regularization_losses=self.losses)
-
-        self.compiled_metrics.update_state(tar_real, real_predict)
-        # Collect metrics to return
-        return {m.name: m.result() for m in self.metrics}
-
-        return_metrics = {}
-        for metric in self.metrics:
-            result = metric.result()
-            if isinstance(result, dict):
-                return_metrics.update(result)
-            else:
-                return_metrics[metric.name] = result
-        return return_metrics
-    
-    def predict_step(self, data):
-        inp, tar, length = data
-        startMask = tf.cast(tf.fill([tf.shape(tar)[0], 1, tf.shape(tar)[-1]],-1),dtype=tf.float32)
-        tar = tf.concat([startMask, tar],1)
-
-        tar_inp = tar[:, :-1, :]
-
-        return self((inp, tar_inp, length), training=False)
-
 def build_T5(input_size, output_size, args):
     inputs = (tf.keras.layers.Input(shape=(None, input_size)),
     tf.keras.layers.Input(shape=(None, input_size*2)),
@@ -168,7 +64,36 @@ def build_T5(input_size, output_size, args):
                             look_ahead_mask=combined_mask,
                             dec_padding_mask=dec_padding_mask) # (batch_size, tar_seq_len, target_vocab_size)
     
-    model = CustomModel(inputs=inputs, outputs=outputs)
+    model = VainillaT5(inputs=inputs, outputs=outputs)
+    
+    model.summary()
+    learning_rate = CustomSchedule(args.d_model)
+    optimizer = tf.keras.optimizers.Adam(learning_rate, beta_1=0.9, beta_2=0.98,
+                                    epsilon=1e-9)
+    #model.add_metric(tf.keras.metrics.Mean(name='train_loss')(outputs))
+    #model.compile(loss=mse_with_proper_loss(output_size), optimizer=optimizer)
+    model.compile(loss=pit_with_outputsize(output_size), optimizer=optimizer)
+#     model.compile(loss=keras.losses.mean_squared_error, optimizer=adam)
+
+    return model
+
+def build_T5_without_teacher(input_size, output_size, args):
+    inputs = (tf.keras.layers.Input(shape=(None, input_size)),
+    tf.keras.layers.Input(shape=(None, input_size)),
+    tf.keras.layers.Input(shape=(1)) )
+    # targets, length
+    transformer = TransformerSpeechSep(num_layers=args.num_layers, d_model=args.d_model, num_heads=args.num_heads, d_ff=args.d_ff,
+        input_size=129, target_size=129,
+        pe_input=10000, pe_target=6000, dropout = args.dropout)
+
+    inp, tar, length = inputs
+    enc_padding_mask, combined_mask, dec_padding_mask = create_masks(inp, tar, length)
+    outputs, attention_weights = transformer(inp, tar, training=False,
+                            enc_padding_mask=enc_padding_mask,
+                            look_ahead_mask=combined_mask,
+                            dec_padding_mask=dec_padding_mask) # (batch_size, tar_seq_len, target_vocab_size)
+    
+    model = VainillaT5(inputs=inputs, outputs=outputs)
     
     model.summary()
     learning_rate = CustomSchedule(args.d_model)
@@ -429,6 +354,7 @@ def main():
                     "model_path, wav_type, size_type, train_type, loss_type, learning_rate_type,"
                     "input_size, output_size, batch_size, case, ckpt_path, tr_path, val_path, tt_path,"
                     "test_wav_dir, is_load_model")
+    """
     args = Config( 2048      , 64      , 512              , 0.1 , "gated_gelu", 4       , 
                 1e-06    , "t5"             , 8 , "absolute" , 200     , 129   ,
                 "CKPT", "wav8k", "min", "train-360", "mse", "inverse_root",
@@ -448,7 +374,6 @@ def main():
                 'C:/J_and_J_Research/mycode/tfrecords/tt_tfrecords_real', 
                 'C:/J_and_J_Research/mycode/test_wav',
                 True) 
-    """
     print("hello World!")
     #train_model(args)
 

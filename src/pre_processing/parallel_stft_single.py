@@ -302,7 +302,7 @@ def gen_feats(wav_name, sample_rate, window_size, window_shift, file, tfrecord_d
             
             ex = make_sequence_example(inputs, labels, mix_stft.shape[0], part_name)
             writer.write(ex.SerializeToString())
-    else:
+    elif case == "signal":
         # ------- AUDIO READ -------
         s1_wav  = audioread(s1_wav_name,  offset=0.0, duration=None, sample_rate=sample_rate)
         s2_wav  = audioread(s2_wav_name,  offset=0.0, duration=None, sample_rate=sample_rate)
@@ -342,6 +342,58 @@ def gen_feats(wav_name, sample_rate, window_size, window_shift, file, tfrecord_d
             
             ex = make_sequence_example(s2_abs, s2_angle, s2_stft.shape[0], part_name + '_s2')
             writer.write(ex.SerializeToString())
+    else:
+        # ------- AUDIO READ -------
+        mix_wav = audioread(mix_wav_name, offset=0.0, duration=None, sample_rate=sample_rate)
+        s1_wav  = audioread(s1_wav_name,  offset=0.0, duration=None, sample_rate=sample_rate)
+        s2_wav  = audioread(s2_wav_name,  offset=0.0, duration=None, sample_rate=sample_rate)
+        # --------------------------
+        
+        # ------- AUDIO PAD -------
+        mix_wav_pad = np.pad(mix_wav, (0, max_len - len(mix_wav)), 'constant', constant_values=(0))
+        s1_wav_pad = np.pad(s1_wav, (0, max_len - len(s1_wav)), 'constant', constant_values=(0))
+        s2_wav_pad = np.pad(s2_wav, (0, max_len - len(s2_wav)), 'constant', constant_values=(0))
+        # -------------------------
+
+        # ------- STFT -------
+        mix_stft = stft(mix_wav, time_dim=0, size=window_size, shift=window_shift)
+        
+        mix_stft_pad = stft(mix_wav_pad, time_dim=0, size=window_size, shift=window_shift)
+        s1_stft_pad = stft(s1_wav_pad, time_dim=0, size=window_size, shift=window_shift)
+        s2_stft_pad = stft(s2_wav_pad, time_dim=0, size=window_size, shift=window_shift)
+        # --------------------
+        
+        part_name = os.path.splitext(wav_name)[0]
+        tfrecords_name_1 = tfrecord_d + file + '_trace_tfrecord/' + part_name + '_ex1.tfrecords'
+        tfrecords_name_2 = tfrecord_d + file + '_trace_tfrecord/' + part_name + '_ex2.tfrecords'
+        
+        mix_abs = np.abs(mix_stft_pad)
+        mix_angle = np.angle(mix_stft_pad)
+        inputs = np.concatenate((mix_abs, mix_angle), axis=1)
+
+        with tf.io.TFRecordWriter(tfrecords_name_1) as writer:
+            tf.compat.v1.logging.info("Writing utterance %s" %tfrecords_name_1)
+
+            s1_abs = np.abs(s1_stft_pad)
+            s1_angle = np.angle(s1_stft_pad)
+
+            s1 = s1_abs * np.cos(mix_angle - s1_angle)
+
+            ex1 = make_sequence_example(inputs, s1, mix_stft.shape[0], part_name)
+
+            writer.write(ex1.SerializeToString())
+
+        with tf.io.TFRecordWriter(tfrecords_name_2) as writer:
+            tf.compat.v1.logging.info("Writing utterance %s" %tfrecords_name_1)
+
+            s2_abs = np.abs(s2_stft_pad)
+            s2_angle = np.angle(s2_stft_pad)
+
+            s2 = s2_abs * np.cos(mix_angle - s2_angle)
+            
+            ex2 = make_sequence_example(inputs, s2, mix_stft.shape[0], part_name)
+
+            writer.write(ex2.SerializeToString())
 
 def gen_feats_total(lines, sample_rate, window_size, window_shift, files, tfrecord_d, target_wav_dir, max_len, CASE):
     max_len = max_length(target_wav_dir, sample_rate, 'mix_clean', lines)
@@ -355,7 +407,7 @@ def gen_feats_total(lines, sample_rate, window_size, window_shift, files, tfreco
 
         
 def main():
-    CASE = 'mixed' # mixed or signal
+    CASE = 'trace' # mixed or signal
     
     sample_rate = 8000
     window_size = 256
@@ -378,14 +430,15 @@ def main():
                 
                 # Check max length
                 max_len = 0
-                
-                if CASE == 'mixed':
+                if CASE == 'mixed' or CASE == 'trace':
                     #for name in lines:
                     #    name = name.strip('\n')
                     #    max_len = max_length(target_wav_dir, sample_rate, name, 'mix_clean', lines)
                     max_len = max_lens[big_folder]
-                else:
-                    
+                    mkdir_p(tfrecord_dir + files + '_tfrecord') # tfrecord_dir 폴더 만드는 코드
+                    mkdir_p(tfrecord_dir + files + '_trace_tfrecord') # tfrecord_dir 폴더 만드는 코드
+                elif CASE == 'signal':
+                    mkdir_p(tfrecord_dir + files + '_one_source_tfrecord') # tfrecord_dir 폴더 만드는 코드
                     max_len1 = max_length(target_wav_dir, sample_rate, 's1', lines)
                     max_len2 = max_length(target_wav_dir, sample_rate, 's2', lines)
 
@@ -396,8 +449,6 @@ def main():
                 
                 
                 # Make tfrecords files
-                mkdir_p(tfrecord_dir + files + '_tfrecord') # tfrecord_dir 폴더 만드는 코드
-                mkdir_p(tfrecord_dir + files + '_one_source_tfrecord') # tfrecord_dir 폴더 만드는 코드
                 threads.append(threading.Thread(target=gen_feats_total, args=(lines, sample_rate, window_size, window_shift, files, tfrecord_dir, target_wav_dir, max_len, CASE)))
     
 

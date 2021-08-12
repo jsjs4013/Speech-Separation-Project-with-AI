@@ -30,6 +30,23 @@ BASE_PATH = '/home/aimaster/lab_storage/Datasets/LibriMix/MixedData/Libri2Mix/'
 START_MASK = tf.fill([1,129],-1)
 END_MASK = tf.fill([1,129],-2)
 """
+
+"""
+startMask = tf.cast(tf.fill([tf.shape(tar)[0], 1, tf.shape(tar)[-1]],-1),dtype=tf.float32)
+tar = tf.concat([startMask, tar],1)
+
+startMask = tf.cast(tf.fill([1,258],-1),dtype=tf.float32)
+output = tf.expand_dims(startMask, 0)
+output = tf.repeat(output, batch_size, 0)
+
+"""
+
+START_TOKEN = tf.cast(tf.fill([1,129],-1),tf.float32)
+PADDING_TOKEN = tf.cast(tf.fill([1,129],0),tf.float32)
+END_TOKEN = tf.cast(tf.fill([1,129],-2),tf.float32)
+TRACE_TOKEN = tf.cast(tf.fill([1,129],-3),tf.float32)
+SOURCE1_TOKEN = tf.cast(tf.fill([1,129],-4),tf.float32)
+
 def data_preprocessing(data, check, input_size=129*2, output_size=129*2):
     if check == 'inputs':
         inputs = tf.slice(data, [0, 0], [-1, input_size//2])
@@ -42,6 +59,30 @@ def data_preprocessing(data, check, input_size=129*2, output_size=129*2):
         label2 = tf.slice(data, [0, output_size//2], [-1, -1])
         
         return label1, label2
+
+
+def data_preprocessing_trace_task(mix_data, labels, input_size=129*2, output_size=129*2):
+    
+    inputs = tf.slice(mix_data, [0, 0], [-1, input_size//2])
+    angle = tf.slice(mix_data, [0, input_size//2], [-1, -1])
+    inputs = tf.concat([TRACE_TOKEN, inputs], 0)
+    inputs = tf.concat([inputs, SOURCE1_TOKEN], 0)
+    
+    label1 = tf.slice(labels, [0, 0], [-1, output_size//2])
+    label2 = tf.slice(labels, [0, output_size//2], [-1, -1])
+    label1_head = tf.slice(labels, [0, 0], [0, output_size//2])
+    label2_head = tf.slice(labels, [0, output_size//2], [0, -1])
+
+    inputs1 = tf.concat([inputs, label1_head], 0)
+    inputs2 = tf.concat([inputs, label2_head], 0)
+
+    label1 = tf.concat([SOURCE1_TOKEN, label1], 0)
+    label2 = tf.concat([SOURCE1_TOKEN, label2], 0)
+
+
+    return inputs1, label1, inputs2, label2, angle
+
+
 
 # data_type == test then return test data
 def read_tfrecord(example, input_size=129*2, output_size=129*2, check='train', case='mixed'):
@@ -138,12 +179,12 @@ def main():
         print(tar.numpy().shape)
         print(length)
         print(inp[1].numpy().shape)
-        print(inp[1].numpy().shape)    
-        print(inp[2].numpy().shape)    
-        print(inp[3].numpy().shape)    
+        print(inp[1].numpy().shape)
+        print(inp[2].numpy().shape)
+        print(inp[3].numpy().shape)
         print(tar[0].numpy().shape)
-        print(tar[1].numpy().shape)    
-        print(tar[2].numpy().shape)    
+        print(tar[1].numpy().shape)
+        print(tar[2].numpy().shape)
         print(tar[3].numpy().shape)
         startMask = tf.cast(tf.fill([tar[:,:].shape[0], 1,258],-1),dtype=tf.float32)
         endMask = tf.cast(tf.fill([tar[:,:].shape[0], 1,258],-2),dtype=tf.float32)
