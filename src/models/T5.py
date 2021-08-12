@@ -257,22 +257,23 @@ def train(args):
         print(f'Time taken for 1 epoch: {time.time() - start:.2f} secs\n')
 
 
-def evaluate(inp, transformer, length=None, max_length=1800):
+def evaluate(inp, transformer, output, length=None, max_length=1800):
     # inp sentence is portuguese, hence adding the start and end token
     encoder_input = inp
     max_length = inp.shape.as_list()[1]
+    cur_length = output.shape.as_list()[1]
     batch_size = inp.shape.as_list()[0]
     
     # as the target is english, the first word to the transformer should be the
     # english start token.
-    startMask = tf.cast(tf.fill([1,258],-1),dtype=tf.float32)
-    output = tf.expand_dims(startMask, 0)
-    output = tf.repeat(output, batch_size, 0)
+    #startMask = tf.cast(tf.fill([1,258],-1),dtype=tf.float32)
+    #output = tf.expand_dims(startMask, 0)
+    #output = tf.repeat(output, batch_size, 0)
     zero_clipping = tf.constant([0.])
     print("output:",output)
 
-    progress_bar = tqdm(range(max_length))
-    for i in range(max_length):
+    progress_bar = tqdm(range(max_length-cur_length))
+    for i in range(max_length-cur_length):
         # predictions.shape == (batch_size, seq_len, vocab_size)
         predictions = transformer((encoder_input, output, length), training=False)
 
@@ -298,7 +299,7 @@ def predict(args):
 
     with tf.device('/gpu:0'):
         ckpt_path = args.ckpt_path
-        model_path = ckpt_path + "/CKP_ep_132__loss_291.81320_.h5"
+        model_path = ckpt_path + "/CKP_ep_162__loss_6.18365_.h5"
 
         # T5 load
         if True:
@@ -315,8 +316,13 @@ def predict(args):
             angle_numpy = tf.constant(angle_batch)
             angle_numpy = angle_numpy.numpy()
             
-            result = evaluate(input_batch, model, length, max_length=1800)
-            result = result[:,1:,:]
+            startMask = tf.cast(tf.fill([tf.shape(label_batch)[0], 1, tf.shape(label_batch)[-1]],-1),dtype=tf.float32)
+            tar = tf.concat([startMask, label_batch],1)
+
+            tar_inp = tar[:, :400, :]
+            result = model((input_batch, tar_inp, length), training=False)
+            result = evaluate(input_batch, model, result, length, max_length=1800)
+            #result = result[:,1:,:]
             #result = model.predict(input_batch)
             label1 = tf.slice(result, [0, 0, 0], [-1, -1, OUTPUT_SIZE])
             label2 = tf.slice(result, [0, 0, OUTPUT_SIZE], [-1, -1, -1])
