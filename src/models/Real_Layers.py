@@ -78,6 +78,138 @@ def dense_relu_dense(d_model, d_ff, dropout = 0.1):
     ])
 
 
+class FeedForwardLayer(tf.keras.layers):
+    def __init__(self, d_model, d_ff, feed_forward_proj = "gated-gelu", dropout=0.1):
+        super(FeedForwardLayer, self).__init__()
+        if feed_forward_proj == "relu":
+            self.DenseReluDense =  dense_relu_dense(d_model, d_ff, dropout)
+        else:
+            self.DenseReluDense = Dense_GatedGelu_Dense(d_model, d_ff, dropout)
+
+        self.layer_norm = tf.keras.layers.LayerNormalization(epsilon=1e-6)
+        self.dropout = tf.keras.layers.Dropout(dropout)
+
+    def call(self, hidden_states):
+        forwarded_states = self.layer_norm(hidden_states)
+        forwarded_states = self.DenseReluDense(forwarded_states)
+        hidden_states = hidden_states + self.dropout(forwarded_states)
+        return hidden_states
+
+def find_pruneable_heads_and_indices(
+    heads, n_heads, head_size, already_pruned_heads
+):
+    """
+    Finds the heads and their indices taking :obj:`already_pruned_heads` into account.
+    Args:
+        heads (:obj:`List[int]`): List of the indices of heads to prune.
+        n_heads (:obj:`int`): The number of heads in the model.
+        head_size (:obj:`int`): The size of each head.
+        already_pruned_heads (:obj:`Set[int]`): A set of already pruned heads.
+    Returns:
+        :obj:`Tuple[Set[int], dtype = tf.int64]`: A tuple with the remaining heads and their corresponding indices.
+    """
+    mask = tf.ones(n_heads, head_size)
+    heads = set(heads) - already_pruned_heads  # Convert to set and remove already pruned heads
+    for head in heads:
+        # Compute how many pruned heads are before the head and move the index accordingly
+        head = head - sum(1 if h < head else 0 for h in already_pruned_heads)
+        mask[head] = 0
+    mask = mask.view(-1).contiguous().eq(1)
+    index = tf.cast(tf.range(len(mask))[mask],dtype=tf.int64)
+    return heads, index
+
+def tf_index_select(input_, dim, indices):
+    """
+    input_(tensor): input tensor
+    dim(int): dimension
+    indices(list): selected indices list
+    """
+    shape = input_.get_shape().as_list()
+    if dim == -1:
+        dim = len(shape)-1
+    shape[dim] = 1
+
+    tmp = []
+    for idx in indices:
+        begin = [0]*len(shape)
+        begin[dim] = idx
+        tmp.append(tf.slice(input_, begin, shape))
+    res = tf.concat(tmp, axis=dim)
+
+    return res
+
+def prune_linear_layer(layer, index, dim = 0):
+    """
+    Prune a linear layer to keep only entries in index.
+    Used to remove heads.
+    Args:
+        layer (:obj:`tf.keras.layers.Dense`): The layer to prune.
+        index (:obj:`tf.int64`): The indices to keep in the layer.
+        dim (:obj:`int`, `optional`, defaults to 0): The dimension on which to keep the indices.
+    Returns:
+        :obj:`tf.keras.layers.Dense`: The pruned layer as a new layer with :obj:`requires_grad=True`.
+    """
+    W = layer.get_weights()[0]
+    W = tf_index_select(W, dim, index)
+    is_bias = len(layer.get_weights()) > 1
+    if is_bias is True:
+        if dim == 1:
+            b = layer.get_weights()[1]
+        else:
+            b = layer.get_weights()[1][index]
+    new_size = list(tf.shape(layer.get_weights()[0]))
+    new_size[dim] = len(index)
+    new_layer = tf.keras.layers.Dense(new_size[0], bias=b is not None)
+    new_layer.weight.requires_grad = False
+    new_layer.weight.copy_(W.contiguous())
+    new_layer.weight.requires_grad = True
+    if layer.bias is not None:
+        new_layer.bias.requires_grad = False
+        new_layer.bias.copy_(b.contiguous())
+        new_layer.bias.requires_grad = True
+    return new_layer
+
+class AttentionLayer(tf.keras.layers):
+    def __init__(self, d_model, d_kv, num_heads, is_decoder, relative_attention_num_buckets, has_relative_attention_bias=False, dropout = 0.1):
+        super(AttentionLayer, self).__init__()
+        self.is_decoder = is_decoder
+        self.has_relative_attention_bias = has_relative_attention_bias
+
+        self.relative_attention_num_buckets = relative_attention_num_buckets
+        self.d_model = d_model
+        self.key_value_proj_dim = d_kv
+        self.n_heads = num_heads
+        self.dropout = dropout
+        self.inner_dim = self.n_heads * self.key_value_proj_dim
+
+        self.q = tf.keras.layers.Dense(self.inner_dim, use_bias=False)
+        self.k = tf.keras.layers.Dense(self.inner_dim, use_bias=False)
+        self.v = tf.keras.layers.Dense(self.inner_dim, use_bias=False)
+        self.o = tf.keras.layers.Dense(self.d_model, use_bias=False)
+
+        if self.has_relative_attention_bias : 
+            self.relative_attention_bias = tf.keras.layers.Embedding(self.relative_attention_num_buckets, self.n_heads)
+        self.pruned_heads = set()
+
+    def prune_heads(self, heads):
+        if len(heads) == 0:
+            return
+        heads, index = find_pruneable_heads_and_indices(
+            heads, self.n_heads, self.key_value_proj_dim, self.pruned_heads
+        )
+
+        # Prune linear layers
+        self.q = prune_linear_layer(self.q, index)
+        self.k = prune_linear_layer(self.k, index)
+        self.v = prune_linear_layer(self.v, index)
+        self.o = prune_linear_layer(self.o, index, dim=1)
+        # Update hyper params
+        self.n_heads = self.n_heads - len(heads)
+        self.inner_dim = self.key_value_proj_dim * self.n_heads
+        self.pruned_heads = self.pruned_heads.union(heads)
+
+
+
 class EncoderLayer(tf.keras.layers.Layer):
     def __init__(self, d_model, num_heads, d_ff, dropout=0.1):
         super(EncoderLayer, self).__init__()
