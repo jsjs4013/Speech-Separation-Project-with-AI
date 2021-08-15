@@ -3,6 +3,7 @@ import tensorflow as tf
 sys.path.append(os.path.dirname(os.path.abspath(os.path.dirname(__file__))))
 
 from util.math_function import scaled_dot_product_attention, positional_encoding
+import math
 
 class MultiHeadAttention(tf.keras.layers.Layer):
     def __init__(self, d_model, num_heads):
@@ -159,15 +160,17 @@ def prune_linear_layer(layer, index, dim = 0):
             b = layer.get_weights()[1][index]
     new_size = list(tf.shape(layer.get_weights()[0]))
     new_size[dim] = len(index)
-    new_layer = tf.keras.layers.Dense(new_size[0], bias=b is not None)
-    new_layer.weight.requires_grad = False
+    new_layer = tf.keras.layers.Dense(new_size[0], use_ibas = is_bias)
+    new_layer.setweights(layer.get_weights())
+    """new_layer.weight.requires_grad = False
     new_layer.weight.copy_(W.contiguous())
     new_layer.weight.requires_grad = True
     if layer.bias is not None:
         new_layer.bias.requires_grad = False
         new_layer.bias.copy_(b.contiguous())
-        new_layer.bias.requires_grad = True
+        new_layer.bias.requires_grad = True"""
     return new_layer
+
 
 class AttentionLayer(tf.keras.layers):
     def __init__(self, d_model, d_kv, num_heads, is_decoder, relative_attention_num_buckets, has_relative_attention_bias=False, dropout = 0.1):
@@ -208,7 +211,52 @@ class AttentionLayer(tf.keras.layers):
         self.inner_dim = self.key_value_proj_dim * self.n_heads
         self.pruned_heads = self.pruned_heads.union(heads)
 
+    @staticmethod
+    def _relative_position_bucket(relative_position, bidirectional=True, num_buckets=32, max_distance=128):
+        """
+        Adapted from Mesh Tensorflow:
+        https://github.com/tensorflow/mesh/blob/0cb87fe07da627bf0b7e60475d59f95ed6b5be3d/mesh_tensorflow/transformer/transformer_layers.py#L593
 
+        Translate relative position to a bucket number for relative attention. The relative position is defined as
+        memory_position - query_position, i.e. the distance in tokens from the attending position to the attended-to
+        position. If bidirectional=False, then positive relative positions are invalid. We use smaller buckets for
+        small absolute relative_position and larger buckets for larger absolute relative_positions. All relative
+        positions >=max_distance map to the same bucket. All relative positions <=-max_distance map to the same bucket.
+        This should allow for more graceful generalization to longer sequences than the model has been trained on
+
+        Args:
+            relative_position: an int32 Tensor
+            bidirectional: a boolean - whether the attention is bidirectional
+            num_buckets: an integer
+            max_distance: an integer
+
+        Returns:
+            a Tensor with the same shape as relative_position, containing int32 values in the range [0, num_buckets)
+        """
+        relative_buckets = 0
+        if bidirectional:
+            num_buckets //= 2
+            relative_buckets += tf.cast(relative_position > 0,tf.int64) * num_buckets
+            relative_position = tf.math.abs(relative_position)
+        else:
+            relative_position = -tf.math.minimum(relative_position, tf.zeros_like(relative_position))
+        # now relative_position is in the range [0, inf)
+
+        # half of the buckets are for exact increments in positions
+        max_exact = num_buckets // 2
+        is_small = relative_position < max_exact
+
+        # The other half of the buckets are for logarithmically bigger bins in positions up to max_distance
+        relative_postion_if_large = max_exact + tf.cast(
+            tf.math.log(relative_position.float() / max_exact)
+            / math.log(max_distance / max_exact)
+            * (num_buckets - max_exact), tf.int64)
+        relative_postion_if_large = tf.math.minimum(
+            relative_postion_if_large, (num_buckets - 1) * tf.ones_like(relative_postion_if_large)
+        )
+
+        relative_buckets += tf.where(is_small, relative_position, relative_postion_if_large)
+        return relative_buckets
 
 class EncoderLayer(tf.keras.layers.Layer):
     def __init__(self, d_model, num_heads, d_ff, dropout=0.1):
