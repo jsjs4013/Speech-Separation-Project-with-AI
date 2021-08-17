@@ -1,9 +1,9 @@
 # J_and_J_research
 todo :
-1. Relative positional encoding
-2. attention mask 적용 # done
-3. padding적용 # done 
-4. padding은 loss계산안하기 적용 # done
+1. [ ] Relative positional encoding
+2. [x] attention mask 적용
+3. [x] padding적용 
+4. [x] padding은 loss계산안하기 적용
 
 LOSS - problems
 1. si-sdr loss 적용
