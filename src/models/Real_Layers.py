@@ -1,19 +1,23 @@
 import sys, os
+from numpy.core.records import array
 import tensorflow as tf
 sys.path.append(os.path.dirname(os.path.abspath(os.path.dirname(__file__))))
 
-from util.math_function import scaled_dot_product_attention, positional_encoding
+#from util.math_function import scaled_dot_product_attention, positional_encoding
+#from util.modeling_function import *
+from modelOutput import BaseModelOutputWithPastAndCrossAttentions, Seq2SeqModelOutput, BaseModelOutput
 import math
 
-
 class Dense_GatedGelu_Dense(tf.keras.layers.Layer):
-    def __init__(self, d_model, d_ff, dropout = 0.1):
+    def __init__(self, d_model, d_ff, dropout = 0.1, factor=1.):
         super(Dense_GatedGelu_Dense, self).__init__()
-        self.dense_gelu = tf.keras.layers.Dense(d_ff, activation='gelu', use_bias = False)  # (batch_size, seq_len, dff)
-        self.linear = tf.keras.layers.Dense(d_ff, use_bias = False)
+        d_model_init = tf.keras.initializers.RandomNormal(mean=0, stddev= factor * (d_model**-0.5))
+        d_ff_init = tf.keras.initializers.RandomNormal(mean=0, stddev= factor * (d_ff**-0.5))
+        self.dense_gelu = tf.keras.layers.Dense(d_ff, activation='gelu', kernel_initializer = d_model_init, use_bias = False)  # (batch_size, seq_len, dff)
+        self.linear = tf.keras.layers.Dense(d_ff, kernel_initializer = d_model_init, use_bias = False)
         self.multiply = tf.keras.layers.Multiply()
         self.dropout = tf.keras.layers.Dropout(dropout)
-        self.fin_dense = tf.keras.layers.Dense(d_model, use_bias = False)
+        self.fin_dense = tf.keras.layers.Dense(d_model, kernel_initializer = d_ff_init, use_bias = False)
         
     def call(self, hidden_states):
         hidden_gelu= self.dense_gelu(hidden_states)
@@ -24,21 +28,23 @@ class Dense_GatedGelu_Dense(tf.keras.layers.Layer):
         
         return hidden_states
 
-def dense_relu_dense(d_model, d_ff, dropout = 0.1): 
+def dense_relu_dense(d_model, d_ff, dropout = 0.1, factor = 1.): 
+    d_model_init = tf.keras.initializers.RandomNormal(mean=0, stddev= factor * (d_model**-0.5))
+    d_ff_init = tf.keras.initializers.RandomNormal(mean=0, stddev= factor * (d_ff**-0.5))
     return tf.keras.Sequential([
-        tf.keras.layers.Dense(d_ff, activation='relu', use_bias = False),  # (batch_size, seq_len, dff)
+        tf.keras.layers.Dense(d_ff, activation='relu', kernel_initializer = d_model_init, use_bias = False),  # (batch_size, seq_len, dff)
         tf.keras.layers.Dropout(dropout), # (batch_size, seq_len, d_model)
-        tf.keras.layers.Dense(d_model, use_bias = False)  # (batch_size, seq_len, d_model)
+        tf.keras.layers.Dense(d_model, kernel_initializer = d_ff_init, use_bias = False)  # (batch_size, seq_len, d_model)
     ])
 
 
 class FeedForwardLayer(tf.keras.layers.Layer):
-    def __init__(self, d_model, d_ff, feed_forward_proj = "gated-gelu", dropout=0.1):
+    def __init__(self, d_model, d_ff, feed_forward_proj = "gated-gelu", dropout=0.1, factor=1.):
         super(FeedForwardLayer, self).__init__()
         if feed_forward_proj == "relu":
-            self.DenseReluDense =  dense_relu_dense(d_model, d_ff, dropout)
+            self.DenseReluDense =  dense_relu_dense(d_model, d_ff, dropout, factor)
         else:
-            self.DenseReluDense = Dense_GatedGelu_Dense(d_model, d_ff, dropout)
+            self.DenseReluDense = Dense_GatedGelu_Dense(d_model, d_ff, dropout, factor)
 
         self.layer_norm = tf.keras.layers.LayerNormalization(epsilon=1e-6)
         self.dropout = tf.keras.layers.Dropout(dropout)
@@ -62,7 +68,7 @@ def find_pruneable_heads_and_indices(
     Returns:
         :obj:`Tuple[Set[int], dtype = tf.int64]`: A tuple with the remaining heads and their corresponding indices.
     """
-    mask = tf.ones(n_heads, head_size)
+    mask = tf.ones([n_heads, head_size])
     heads = set(heads) - already_pruned_heads  # Convert to set and remove already pruned heads
     for head in heads:
         # Compute how many pruned heads are before the head and move the index accordingly
@@ -126,8 +132,12 @@ def prune_linear_layer(layer, index, dim = 0):
 
 
 class AttentionLayer(tf.keras.layers.Layer):
-    def __init__(self, d_model, d_kv, num_heads, is_decoder, relative_attention_num_buckets, has_relative_attention_bias=False, dropout = 0.1):
+    def __init__(self, d_model, d_kv, num_heads, is_decoder, relative_attention_num_buckets, has_relative_attention_bias=False, dropout = 0.1, factor=1.):
         super(AttentionLayer, self).__init__()
+
+        q_initializer = tf.keras.initializers.RandomNormal(mean = 0., stddev=factor * ((d_model * d_kv) ** -0.5))
+        kvb_initializer = tf.keras.initializers.RandomNormal(mean = 0., stddev=factor * ((d_model) ** -0.5))
+        o_initializer = tf.keras.initializers.RandomNormal(mean = 0., stddev=factor * ((num_heads * d_kv) ** -0.5))
         self.is_decoder = is_decoder
         self.has_relative_attention_bias = has_relative_attention_bias
 
@@ -139,13 +149,13 @@ class AttentionLayer(tf.keras.layers.Layer):
         self.inner_dim = self.n_heads * self.key_value_proj_dim
         self.softmax = tf.keras.layers.Softmax()
 
-        self.q = tf.keras.layers.Dense(self.inner_dim, use_bias=False)
-        self.k = tf.keras.layers.Dense(self.inner_dim, use_bias=False)
-        self.v = tf.keras.layers.Dense(self.inner_dim, use_bias=False)
-        self.o = tf.keras.layers.Dense(self.d_model, use_bias=False)
+        self.q = tf.keras.layers.Dense(self.inner_dim, kernel_initializer= q_initializer, use_bias=False)
+        self.k = tf.keras.layers.Dense(self.inner_dim, kernel_initializer= kvb_initializer, use_bias=False)
+        self.v = tf.keras.layers.Dense(self.inner_dim, kernel_initializer= kvb_initializer, use_bias=False)
+        self.o = tf.keras.layers.Dense(self.d_model, kernel_initializer= o_initializer, use_bias=False)
 
         if self.has_relative_attention_bias : 
-            self.relative_attention_bias = tf.keras.layers.Embedding(self.relative_attention_num_buckets, self.n_heads)
+            self.relative_attention_bias = tf.keras.layers.Embedding(self.relative_attention_num_buckets, self.n_heads, embeddings_initializer= o_initializer)
         self.pruned_heads = set()
 
     def prune_heads(self, heads):
@@ -202,7 +212,7 @@ class AttentionLayer(tf.keras.layers.Layer):
 
         # The other half of the buckets are for logarithmically bigger bins in positions up to max_distance
         relative_postion_if_large = max_exact + tf.cast(
-            tf.math.log(relative_position.float() / max_exact)
+            tf.math.log(tf.cast(relative_position, tf.float32) / max_exact)
             / math.log(max_distance / max_exact)
             * (num_buckets - max_exact), tf.int64)
         relative_postion_if_large = tf.math.minimum(
@@ -245,8 +255,9 @@ class AttentionLayer(tf.keras.layers.Layer):
         # Input is (batch_size, seq_length, dim)
         # Mask is (batch_size, key_length) (non-causal) or (batch_size, key_length, key_length)
         # past_key_value[0] is (batch_size, n_heads, q_len - 1, dim_per_head)
-        batch_size, seq_length = tf.shape(hidden_states)[:2]
-
+        #batch_size, seq_length = tf.shape(hidden_states)[:2]
+        batch_size = tf.shape(hidden_states)[0]
+        seq_length = tf.shape(hidden_states)[1]
         real_seq_length = seq_length
 
         if past_key_value is not None:
@@ -336,9 +347,9 @@ class AttentionLayer(tf.keras.layers.Layer):
         return outputs
 
 class T5LayerSelfAttention(tf.keras.layers.Layer):
-    def __init__(self, d_model, d_kv, num_heads, is_decoder, relative_attention_num_buckets, eps = 1e-6, has_relative_attention_bias=False, dropout=0.1):
+    def __init__(self, d_model, d_kv, num_heads, is_decoder, relative_attention_num_buckets, eps = 1e-6, has_relative_attention_bias=False, dropout=0.1, factor=1.):
         super(T5LayerSelfAttention, self).__init__()
-        self.SelfAttention = AttentionLayer(d_model, d_kv, num_heads, is_decoder, relative_attention_num_buckets, has_relative_attention_bias=has_relative_attention_bias, dropout=dropout)
+        self.SelfAttention = AttentionLayer(d_model, d_kv, num_heads, is_decoder, relative_attention_num_buckets, has_relative_attention_bias=has_relative_attention_bias, dropout=dropout, factor=factor)
         self.layer_norm = tf.keras.layers.LayerNormalization(epsilon=eps)
         self.dropout = tf.keras.layers.Dropout(dropout)
 
@@ -367,9 +378,9 @@ class T5LayerSelfAttention(tf.keras.layers.Layer):
         return outputs
 
 class T5LayerCrossAttention(tf.keras.layers.Layer):
-    def __init__(self, d_model, d_kv, num_heads, is_decoder, relative_attention_num_buckets, eps = 1e-6, dropout=0.1):
+    def __init__(self, d_model, d_kv, num_heads, is_decoder, relative_attention_num_buckets, eps = 1e-6, dropout=0.1, factor=1.):
         super(T5LayerCrossAttention, self).__init__()
-        self.EncDecAttention = AttentionLayer(d_model, d_kv, num_heads, is_decoder, relative_attention_num_buckets, has_relative_attention_bias=False, dropout=dropout)
+        self.EncDecAttention = AttentionLayer(d_model, d_kv, num_heads, is_decoder, relative_attention_num_buckets, has_relative_attention_bias=False, dropout=dropout, factor= factor)
         self.layer_norm = tf.keras.layers.LayerNormalization(epsilon=eps)
         self.dropout = tf.keras.layers.Dropout(dropout)
 
@@ -402,14 +413,14 @@ class T5LayerCrossAttention(tf.keras.layers.Layer):
         return outputs
 
 class T5Block(tf.keras.layers.Layer):
-    def __init__(self,  d_model, d_ff, d_kv, feed_forward_proj, num_heads, is_decoder, relative_attention_num_buckets, eps = 1e-6,  has_relative_attention_bias=False, dropout=0.1):
+    def __init__(self,  d_model, d_ff, d_kv, feed_forward_proj, num_heads, is_decoder, relative_attention_num_buckets, eps = 1e-6,  has_relative_attention_bias=False, dropout=0.1, factor=1.):
         super(T5Block, self).__init__()
         self.is_decoder = is_decoder
         self.layer = tf.keras.Sequential()
-        self.layer.add(T5LayerSelfAttention(d_model, d_kv, num_heads, is_decoder, relative_attention_num_buckets, eps = eps, has_relative_attention_bias=has_relative_attention_bias, dropout=dropout))
+        self.layer.add(T5LayerSelfAttention(d_model, d_kv, num_heads, is_decoder, relative_attention_num_buckets, eps = eps, has_relative_attention_bias=has_relative_attention_bias, dropout=dropout, factor=factor))
         if self.is_decoder:
-            self.layer.add(T5LayerCrossAttention(d_model, d_kv, num_heads, is_decoder, relative_attention_num_buckets, eps = eps, dropout= dropout))
-        self.layer.add(FeedForwardLayer(d_model, d_ff, feed_forward_proj, dropout))
+            self.layer.add(T5LayerCrossAttention(d_model, d_kv, num_heads, is_decoder, relative_attention_num_buckets, eps = eps, dropout= dropout, factor=factor))
+        self.layer.add(FeedForwardLayer(d_model, d_ff, feed_forward_proj, dropout, factor=factor))
 
     def call(
         self,
@@ -512,14 +523,14 @@ class T5Block(tf.keras.layers.Layer):
         return outputs  # hidden-states, present_key_value_states, (self-attention position bias), (self-attention weights), (cross-attention position bias), (cross-attention weights)
 
 class T5Stack(tf.keras.layers.Layer):
-    def __init__(self, num_layers, d_model, d_ff, d_kv, feed_forward_proj, num_heads, is_decoder, relative_attention_num_buckets, eps = 1e-6, dropout=0.1, embed_tokens=None ):
+    def __init__(self, num_layers, d_model, d_ff, d_kv, feed_forward_proj, num_heads, is_decoder, relative_attention_num_buckets, eps = 1e-6, dropout=0.1, embed_tokens=None, factor=1.):
         super(T5Stack, self).__init__()
 
         self.embed_tokens = embed_tokens
         self.is_decoder = is_decoder
 
         self.block = tf.keras.Sequential(
-            [T5Block(d_model, d_ff, d_kv, feed_forward_proj, num_heads, is_decoder, relative_attention_num_buckets, eps = eps, dropout=dropout, has_relative_attention_bias=bool(i == 0)) for i in range(num_layers)]
+            [T5Block(d_model, d_ff, d_kv, feed_forward_proj, num_heads, is_decoder, relative_attention_num_buckets, eps = eps, dropout=dropout, has_relative_attention_bias=bool(i == 0), factor=factor) for i in range(num_layers)]
         )
         self.final_layer_norm = tf.keras.layers.LayerNormalization(epsilon=eps)
         self.dropout = tf.keras.layers.Dropout(dropout)
@@ -612,7 +623,7 @@ class T5Stack(tf.keras.layers.Layer):
     def set_input_embeddings(self, new_embeddings):
         self.embed_tokens = new_embeddings
 
-    def forward(
+    def call(
         self,
         input_ids=None,
         attention_mask=None,
@@ -641,7 +652,7 @@ class T5Stack(tf.keras.layers.Layer):
             )
         elif input_ids is not None:
             input_shape = tf.shape(input_ids)
-            input_ids = tf.reshape(input_ids, (-1, input_shape[-1]))
+        #    input_ids = tf.reshape(input_ids, (-1, input_shape[-1]))
         elif inputs_embeds is not None:
             input_shape = tf.shape(inputs_embeds)[:-1]
         else:
@@ -652,7 +663,8 @@ class T5Stack(tf.keras.layers.Layer):
             assert self.embed_tokens is not None, "You have to initialize the model with valid token embeddings"
             inputs_embeds = self.embed_tokens(input_ids)
 
-        batch_size, seq_length = input_shape
+        batch_size = input_shape[0]
+        seq_length = input_shape[1]
 
         # required mask seq length can be calculated via length of past
         mask_seq_length = tf.shape(past_key_values[0][0])[2] + seq_length if past_key_values is not None else seq_length
@@ -661,11 +673,14 @@ class T5Stack(tf.keras.layers.Layer):
             assert self.is_decoder, f":obj:`use_cache` can only be set to `True` if {self} is used as a decoder"
 
         if attention_mask is None: # tf.device(tf.ones(batch_size, mask_seq_length), input_embeds.device)
-            attention_mask = tf.ones(batch_size, mask_seq_length)
+            """raise ValueError(
+                    "you need to set an attention mask for input_ids"
+            )"""
+            attention_mask = tf.ones([batch_size, mask_seq_length])
         if self.is_decoder and encoder_attention_mask is None and encoder_hidden_states is not None:
             encoder_seq_length = tf.shape(encoder_hidden_states)[1]
             encoder_attention_mask = tf.ones(
-                batch_size, encoder_seq_length, dtype=tf.int64
+                [batch_size, encoder_seq_length], dtype=tf.int64
             )
 
         # initialize past_key_values with `None` if past does not exist
@@ -674,12 +689,14 @@ class T5Stack(tf.keras.layers.Layer):
 
         # We can provide a self-attention mask of dimensions [batch_size, from_seq_length, to_seq_length]
         # ourselves in which case we just need to make it broadcastable to all heads.
-        extended_attention_mask = self.get_extended_attention_mask(attention_mask, input_shape, inputs_embeds.device)
+        extended_attention_mask = self.get_extended_attention_mask(attention_mask, input_shape)
+        #extended_attention_mask = attention_mask
 
         # If a 2D or 3D attention mask is provided for the cross-attention
         # we need to make broadcastable to [batch_size, num_heads, seq_length, seq_length]
         if self.is_decoder and encoder_hidden_states is not None:
-            encoder_batch_size, encoder_sequence_length, _ = tf.shape(encoder_hidden_states)
+            encoder_batch_size = tf.shape(encoder_hidden_states)[0]
+            encoder_sequence_length = tf.shape(encoder_hidden_states)[1]
             encoder_hidden_shape = (encoder_batch_size, encoder_sequence_length)
             if encoder_attention_mask is None:
                 encoder_attention_mask = tf.ones(encoder_hidden_shape) # , device=inputs_embeds.device
@@ -785,16 +802,14 @@ class T5Stack(tf.keras.layers.Layer):
                 ]
                 if v is not None
             )
-        return {
-            "last_hidden_state":hidden_states,
-            "past_key_values":present_key_value_states,
-            "hidden_states":all_hidden_states,
-            "attentions":all_attentions,
-            "cross_attentions":all_cross_attentions,
-        }
-    
-    
-    def get_extended_attention_mask(self, attention_mask, input_shape, device):
+        return BaseModelOutputWithPastAndCrossAttentions(
+            last_hidden_state=hidden_states,
+            past_key_values=present_key_value_states,
+            hidden_states=all_hidden_states,
+            attentions=all_attentions,
+            cross_attentions=all_cross_attentions,
+        )
+    def get_extended_attention_mask(self, attention_mask, input_shape):
         """
         Makes broadcastable attention and causal masks so that future and masked tokens are ignored.
 
@@ -811,40 +826,41 @@ class T5Stack(tf.keras.layers.Layer):
         """
         # We can provide a self-attention mask of dimensions [batch_size, from_seq_length, to_seq_length]
         # ourselves in which case we just need to make it broadcastable to all heads.
-        if len(attention_mask.get_shape()) == 3:
+        """if attention_mask.get_shape().rank == 3:
             extended_attention_mask = attention_mask[:, None, :, :]
-        elif len(attention_mask.get_shape()) == 2:
-            # Provided a padding mask of dimensions [batch_size, seq_length]
-            # - if the model is a decoder, apply a causal mask in addition to the padding mask
-            # - if the model is an encoder, make the mask broadcastable to [batch_size, num_heads, seq_length, seq_length]
-            if self.config.is_decoder:
-                batch_size, seq_length = input_shape
-                seq_ids = tf.range(seq_length) # , device=device
-                causal_mask = tf.tile(seq_ids[None, None, :],[batch_size, seq_length, 1]) <= seq_ids[None, :, None]
-                # in case past_key_values are used we need to add a prefix ones mask to the causal mask
-                # causal and attention masks must have same type with pytorch version < 1.3
-                causal_mask = tf.cast(causal_mask, attention_mask.dtype)
+        elif attention_mask.get_shape().rank == 2:"""
+        # Provided a padding mask of dimensions [batch_size, seq_length]
+        # - if the model is a decoder, apply a causal mask in addition to the padding mask
+        # - if the model is an encoder, make the mask broadcastable to [batch_size, num_heads, seq_length, seq_length]
+        if self.is_decoder:
+            batch_size = input_shape[0]
+            seq_length = input_shape[1]
+            seq_ids = tf.range(seq_length) # , device=device
+            causal_mask = tf.tile(seq_ids[None, None, :],[batch_size, seq_length, 1]) <= seq_ids[None, :, None]
+            # in case past_key_values are used we need to add a prefix ones mask to the causal mask
+            # causal and attention masks must have same type with pytorch version < 1.3
+            causal_mask = tf.cast(causal_mask, attention_mask.dtype)
 
-                if tf.shape(causal_mask)[1] < tf.shape(attention_mask)[1]:
-                    prefix_seq_len = tf.shape(attention_mask)[1] - tf.shape(causal_mask)[1]
-                    causal_mask = tf.concat(
-                        [
-                            tf.ones(
-                                (batch_size, seq_length, prefix_seq_len), dtype=causal_mask.dtype # device=device,
-                            ),
-                            causal_mask,
-                        ],
-                        axis=-1,
-                    )
+            if tf.shape(causal_mask)[1] < tf.shape(attention_mask)[1]:
+                prefix_seq_len = tf.shape(attention_mask)[1] - tf.shape(causal_mask)[1]
+                causal_mask = tf.concat(
+                    [
+                        tf.ones(
+                            [batch_size, seq_length, prefix_seq_len], dtype=causal_mask.dtype # device=device,
+                        ),
+                        causal_mask,
+                    ],
+                    axis=-1,
+                )
 
-                extended_attention_mask = causal_mask[:, None, :, :] * attention_mask[:, None, None, :]
-            else:
-                extended_attention_mask = attention_mask[:, None, None, :]
+            extended_attention_mask = causal_mask[:, None, :, :] * attention_mask[:, None, None, :]
         else:
+            extended_attention_mask = attention_mask[:, None, None, :]
+        """else:
             raise ValueError(
                 f"Wrong shape for input_ids (shape {input_shape}) or attention_mask (shape {attention_mask.shape})"
             )
-
+    """
         # Since attention_mask is 1.0 for positions we want to attend and 0.0 for
         # masked positions, this operation will create a tensor which is 0.0 for
         # positions we want to attend and -10000.0 for masked positions.
@@ -864,10 +880,10 @@ class T5Stack(tf.keras.layers.Layer):
         Returns:
             :obj:`torch.Tensor`: The inverted attention mask.
         """
-        if len(encoder_attention_mask.get_shape()) == 3:
-            encoder_extended_attention_mask = encoder_attention_mask[:, None, :, :]
-        if len(encoder_attention_mask.get_shape()) == 2:
-            encoder_extended_attention_mask = encoder_attention_mask[:, None, None, :]
+        """if encoder_attention_mask.get_shape().rank == 3:
+            encoder_extended_attention_mask = encoder_attention_mask[:, None, :, :]"""
+        #if encoder_attention_mask.get_shape().rank == 2:
+        encoder_extended_attention_mask = encoder_attention_mask[:, None, None, :]
         # T5 has a mask that can compare sequence ids, we can simulate this here with this transposition
         # Cf. https://github.com/tensorflow/mesh/blob/8d2465e9bc93129b913b5ccc6a59aa97abd96ec6/mesh_tensorflow
         # /transformer/transformer_layers.py#L270
@@ -905,7 +921,7 @@ class T5Stack(tf.keras.layers.Layer):
             list with :obj:`[None]` for each layer.
         """
         if head_mask is not None:
-            head_mask = self._convert_head_mask_to_5d(head_mask, num_hidden_layers)
+            head_mask = _convert_head_mask_to_5d(head_mask, num_hidden_layers)
             if is_attention_chunked is True:
                 head_mask = tf.expand_dims(head_mask,axis=-1)
         else:
@@ -915,31 +931,35 @@ class T5Stack(tf.keras.layers.Layer):
 
     def _convert_head_mask_to_5d(self, head_mask, num_hidden_layers):
         """-> [num_hidden_layers x batch x num_heads x seq_length x seq_length]"""
-        if len(head_mask.get_shape()) == 1:
-            mask_size = head_mask.get_shape()[0]
-            head_mask = tf.expand_dims(head_mask, axis=0)
-            head_mask = tf.expand_dims(head_mask, axis=0)
-            head_mask = tf.expand_dims(head_mask, axis=-1)
-            head_mask = tf.expand_dims(head_mask, axis=-1)
-            head_mask = tf.broadcast_to(head_mask, [num_hidden_layers, 1, mask_size, 1, 1])
-        elif len(head_mask.get_shape()) == 2:
+        #if head_mask.get_shape().rank == 1:
+        mask_size = head_mask.get_shape()[0]
+        head_mask = tf.expand_dims(head_mask, axis=0)
+        head_mask = tf.expand_dims(head_mask, axis=0)
+        head_mask = tf.expand_dims(head_mask, axis=-1)
+        head_mask = tf.expand_dims(head_mask, axis=-1)
+        head_mask = tf.broadcast_to(head_mask, [num_hidden_layers, 1, mask_size, 1, 1])
+        """elif head_mask.get_shape().dims == 2:
             head_mask = tf.expand_dims(head_mask, axis=1)
             head_mask = tf.expand_dims(head_mask, axis=-1)
-            head_mask = tf.expand_dims(head_mask, axis=-1)
-        assert len(head_mask.get_shape()) == 5, f"head_mask.dim != 5, instead {len(head_mask.get_shape())}"
+            head_mask = tf.expand_dims(head_mask, axis=-1)"""
+        #assert head_mask.get_shape().rank == 5, f"head_mask.dim != 5, instead {len(head_mask.get_shape())}"
         head_mask = tf.cast(head_mask, dtype=self.dtype)  # switch to float if need + fp16 compatibility
         return head_mask
-
 class T5Model(tf.keras.Model):
-    def __init__(self, vocab_size, num_layers, d_model, d_ff, d_kv, feed_forward_proj, num_heads, relative_attention_num_buckets, eps = 1e-6, dropout=0.1, embed_tokens=None):
+    def __init__(self, vocab_size, num_layers, d_model, d_ff, d_kv, feed_forward_proj, num_heads, relative_attention_num_buckets, eps = 1e-6, dropout=0.1, embed_tokens=None, factor=1., embed_or_dense="embed"):
         super(T5Model, self).__init__()
-        self.shared = tf.keras.layers.Embedding(vocab_size, d_model)
+        default_initializer = tf.keras.initializers.RandomNormal(mean=0, stddev=factor*1.)
+        if embed_or_dense == "embed":
+            self.shared = tf.keras.layers.Embedding(vocab_size, d_model, embeddings_initializer=default_initializer)
+        else:
+            self.shared = tf.keras.layers.Dense(d_model, kernel_initializer=default_initializer, use_bias=False, activation = 'tanh')
 
-        self.encoder = T5Stack(num_layers, d_model, d_ff, d_kv, feed_forward_proj, num_heads, is_decoder = False, relative_attention_num_buckets=relative_attention_num_buckets, eps = eps, dropout=dropout, embed_tokens = self.shared)
+        self.encoder = T5Stack(num_layers, d_model, d_ff, d_kv, feed_forward_proj, num_heads, is_decoder = False, relative_attention_num_buckets=relative_attention_num_buckets, eps = eps, dropout=dropout, embed_tokens = self.shared, factor=factor)
 
-        self.decoder = T5Stack(num_layers, d_model, d_ff, d_kv, feed_forward_proj, num_heads, is_decoder = True, relative_attention_num_buckets=relative_attention_num_buckets, eps = eps, dropout=dropout, embed_tokens = self.shared)
-
-        self.init_weights()
+        self.decoder = T5Stack(num_layers, d_model, d_ff, d_kv, feed_forward_proj, num_heads, is_decoder = True, relative_attention_num_buckets=relative_attention_num_buckets, eps = eps, dropout=dropout, embed_tokens = self.shared, factor=factor)
+        self.num_layers = num_layers
+        
+        #self.init_weights()
 
         # Model parallel
         #self.model_parallel = False
@@ -959,11 +979,11 @@ class T5Model(tf.keras.Model):
     def get_decoder(self):
         return self.decoder
 
-    def forward(
+    def call( # 결국 들어오는 것 : input_ids, attention_mask, decoder_input_ids, labels 
         self,
-        input_ids=None,
-        attention_mask=None,
-        decoder_input_ids=None,
+        input_ids=None, #
+        attention_mask=None, #
+        decoder_input_ids=None, #
         decoder_attention_mask=None,
         head_mask=None,
         decoder_head_mask=None,
@@ -997,13 +1017,8 @@ class T5Model(tf.keras.Model):
         use_cache = use_cache if use_cache is not None else False
         return_dict = return_dict if return_dict is not None else False
 
-        # FutureWarning: head_mask was separated into two input args - head_mask, decoder_head_mask
-        if head_mask is not None and decoder_head_mask is None:
-            if self.config.num_layers == self.config.num_decoder_layers:
-                warnings.warn(__HEAD_MASK_WARNING_MSG, FutureWarning)
-                decoder_head_mask = head_mask
-
         # Encode if needed (training, first prediction pass)
+        
         if encoder_outputs is None:
             encoder_outputs = self.encoder(
                 input_ids=input_ids,
@@ -1022,7 +1037,7 @@ class T5Model(tf.keras.Model):
             )
 
         hidden_states = encoder_outputs[0]
-        if self.model_parallel:
+        """if self.model_parallel:
             torch.cuda.set_device(self.decoder.first_device)
         # Set device for model parallelism
         if self.model_parallel:
@@ -1033,7 +1048,7 @@ class T5Model(tf.keras.Model):
             if attention_mask is not None:
                 attention_mask = attention_mask.to(self.decoder.first_device)
             if decoder_attention_mask is not None:
-                decoder_attention_mask = decoder_attention_mask.to(self.decoder.first_device)
+                decoder_attention_mask = decoder_attention_mask.to(self.decoder.first_device)"""
 
         # Decode
         decoder_outputs = self.decoder(
@@ -1065,48 +1080,41 @@ class T5Model(tf.keras.Model):
             encoder_attentions=encoder_outputs.attentions,
         )
 
-class Transformer(tf.keras.Model):
-    def __init__(self, num_layers, d_model, num_heads, d_ff, input_size,
-               target_size, pe_input, pe_target, dropout=0.1):
-        super(Transformer, self).__init__()
-
-        self.tokenizer = Encoder(num_layers, d_model, num_heads, d_ff,
-                                 input_size, pe_input, dropout)
-
-        self.decoder = Decoder(num_layers, d_model, num_heads, d_ff,
-                               target_size, pe_target, dropout)
-
-        self.final_layer = tf.keras.layers.Dense(target_size)
-
-    def call(self, inp, tar, training, enc_padding_mask, look_ahead_mask, dec_padding_mask):
-        # inp (4, 583, 129) -> *2 = (3, 583, 256)
-        # tar (4, 584, 129)
-        enc_output = self.tokenizer(inp, training, enc_padding_mask)  # (batch_size, inp_seq_len, d_model)
-
-        # dec_output.shape == (batch_size, tar_seq_len, d_model)
-        dec_output, attention_weights = self.decoder(
-            tar, enc_output, training, look_ahead_mask, dec_padding_mask)
-        
-        final_output = self.final_layer(dec_output)  # (batch_size, tar_seq_len, target_vocab_size)
-
-        return final_output, attention_weights
-
-class TransformerSpeechSep(tf.keras.Model):
-    def __init__(self, num_layers, d_model, num_heads, d_ff, input_size,
-               target_size, pe_input, pe_target, dropout=0.1):
-        super(TransformerSpeechSep, self).__init__()
-
-        self.transformer = Transformer(num_layers=num_layers, d_model=d_model, num_heads=num_heads, d_ff=d_ff,
-            input_size=input_size, target_size=target_size,
-            pe_input=pe_input, pe_target=pe_target, dropout=dropout)
+class T5ModelMaskCreationModel(tf.keras.Model):
+    def __init__(self, vocab_size, num_layers, d_model, d_ff, d_kv, feed_forward_proj, 
+        num_heads, relative_attention_num_buckets, eps = 1e-6, dropout=0.1, embed_tokens=None, 
+        factor=1., embed_or_dense="embed"):
+        super(T5ModelMaskCreationModel, self).__init__()
+        self.t5 = T5Model(num_layers=num_layers, d_model=d_model, num_heads=num_heads, d_ff=d_ff, d_kv = d_kv, vocab_size=0, feed_forward_proj = feed_forward_proj, 
+            relative_attention_num_buckets=relative_attention_num_buckets, eps=eps, dropout=dropout, factor=factor,
+            embed_or_dense=embed_or_dense)
             
         self.mtp = tf.keras.layers.Multiply()
         
         self.concat = tf.keras.layers.Concatenate()
 
-    def call(self, inp, tar, training, enc_padding_mask, look_ahead_mask, dec_padding_mask):
+    def call( # 결국 들어오는 것 : input_ids, attention_mask, decoder_input_ids, labels 
+        self,
+        input_ids=None, #
+        attention_mask=None, #
+        decoder_input_ids=None, #
+        decoder_attention_mask=None,
+        head_mask=None,
+        decoder_head_mask=None,
+        cross_attn_head_mask=None,
+        encoder_outputs=None,
+        past_key_values=None,
+        inputs_embeds=None,
+        decoder_inputs_embeds=None,
+        use_cache=None,
+        output_attentions=None,
+        output_hidden_states=None,
+        return_dict=None,
+        labels=None,
+    ):
         
-        final_output, attention_weights = self.transformer(inp, tar,training,enc_padding_mask,look_ahead_mask,dec_padding_mask)  # (batch_size, tar_seq_len, target_vocab_size)
+        outputs = self.t5(input_ids=input_ids, attention_mask=attention_mask, decoder_input_ids=decoder_input_ids, 
+             training=False) # (batch_size, tar_seq_len, target_vocab_size)
         #inputs = tf.concat([inp,inp],2)
         #print('mask_output',final_output.shape)
         
@@ -1114,9 +1122,9 @@ class TransformerSpeechSep(tf.keras.Model):
         # added Layers for Speech Separation
         
         # Multiply with Mask creatd by Transformers
-        inputs = self.concat([inp[:,:tar.shape[1],:], inp[:,:tar.shape[1],:]])
+        inputs = self.concat([input_ids[:,:decoder_input_ids.shape[1],:], input_ids[:,:decoder_input_ids.shape[1],:]])
         
-        final_output = self.mtp([final_output, inputs])
+        final_output = self.mtp([outputs[0], inputs])
         """
         final_output = self.dropout(final_output, training = training)
         pred1 = self.maskLayer1(final_output)
@@ -1127,4 +1135,4 @@ class TransformerSpeechSep(tf.keras.Model):
         
         final_output = Concatenate()([cleaned1, cleaned2])
         """
-        return final_output, attention_weights
+        return final_output

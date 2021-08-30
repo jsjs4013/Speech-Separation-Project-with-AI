@@ -13,6 +13,7 @@ from util.math_function import create_padding_mask, create_look_ahead_mask
 from losses.custom_loss import mse_with_proper_loss, MSE_Custom_Loss_No_Length, pit_with_outputsize
 from Layers import TransformerSpeechSep
 from Schedulers import CustomSchedule
+from Real_Layers import T5Model
 from pre_processing.data_pre_processing import load_data
 
 from util.audio_utils import istft, audiowrite
@@ -77,6 +78,36 @@ def build_T5(input_size, output_size, args):
 
     return model
 
+def build_real_T5(input_size, output_size, args):
+    inputs = (tf.keras.layers.Input(shape=(None, input_size)),
+    tf.keras.layers.Input(shape=(None, input_size)),
+    tf.keras.layers.Input(shape=(1)) )
+    # targets, length
+    transformer = T5Model(num_layers=args.num_layers, d_model=args.d_model, num_heads=args.num_heads, d_ff=args.d_ff, d_kv = args.d_kv, vocab_size=0, feed_forward_proj = args.feed_forward_proj, 
+            relative_attention_num_buckets=args.relative_attention_num_buckets, eps=args.layer_norm_epsilon, dropout=args.dropout, factor=args.init_factor,
+            embed_or_dense="dense")
+
+    inp, tar, length = inputs
+    enc_padding_mask, combined_mask, dec_padding_mask = create_masks(inp, tar, length)
+    enc_padding_mask = tf.squeeze(enc_padding_mask)
+    #dec_padding_mask = tf.squeeze(dec_padding_mask)
+    outputs = transformer(input_ids=inp, attention_mask=enc_padding_mask, 
+            decoder_input_ids=tar, 
+             training=False) # (batch_size, tar_seq_len, target_vocab_size)
+    
+    model = VainillaT5(inputs=inputs, outputs=outputs)
+    model.build(inputs)
+    model.summary()
+    learning_rate = CustomSchedule(args.d_model)
+    optimizer = tf.keras.optimizers.Adam(learning_rate, beta_1=0.9, beta_2=0.98,
+                                    epsilon=1e-9)
+    #model.add_metric(tf.keras.metrics.Mean(name='train_loss')(outputs))
+    #model.compile(loss=mse_with_proper_loss(output_size), optimizer=optimizer)
+    model.compile(loss=pit_with_outputsize(output_size), optimizer=optimizer)
+#     model.compile(loss=keras.losses.mean_squared_error, optimizer=adam)
+
+    return model
+
 def build_T5_without_teacher(input_size, output_size, args):
     inputs = (tf.keras.layers.Input(shape=(None, input_size)),
     tf.keras.layers.Input(shape=(None, input_size)),
@@ -93,6 +124,8 @@ def build_T5_without_teacher(input_size, output_size, args):
                             look_ahead_mask=combined_mask,
                             dec_padding_mask=dec_padding_mask) # (batch_size, tar_seq_len, target_vocab_size)
     
+    
+
     model = VainillaT5(inputs=inputs, outputs=outputs)
     
     model.summary()
@@ -128,7 +161,7 @@ def train_model(args):
 
     epoch = args.n_epochs
 
-    strategy = tf.distribute.MirroredStrategy(['/gpu:0','/gpu:1','/gpu:2','/gpu:4','/gpu:5','/gpu:6','/gpu:7']) # '/gpu:0','/gpu:1','/gpu:2','/gpu:4','/gpu:5','/gpu:6','/gpu:7'
+    strategy = tf.distribute.MirroredStrategy() # '/gpu:0','/gpu:1','/gpu:2','/gpu:4','/gpu:5','/gpu:6','/gpu:7'
     print('장치의 수: {}'.format(strategy.num_replicas_in_sync))
 
     with strategy.scope():
@@ -352,6 +385,38 @@ def predict(args):
 
             cnt += 1
 
+def main2():
+    Config = namedtuple('Config',  
+    field_names="d_ff,     d_kv,     d_model,              dropout, feed_forward_proj, num_layers, init_factor," 
+                "layer_norm_epsilon, model_type, num_heads, positional_embedding, n_epochs, vocab_size, relative_attention_num_buckets,"
+                    "model_path, wav_type, size_type, train_type, loss_type, learning_rate_type,"
+                    "input_size, output_size, batch_size, case, ckpt_path, tr_path, val_path, tt_path,"
+                    "test_wav_dir, is_load_model")
+    """
+    args = Config( 2048      , 64      , 512              , 0.1 , "gated-gelu", 4       , 1.,
+                1e-06    , "t5"             , 8 , "absolute" , 200     , 129   , 32,
+                "CKPT", "wav8k", "min", "train-360", "mse", "inverse_root",
+                129, 129, 25, 'mixed', '/home/aimaster/lab_storage/models/Librimix/wav8k/min/train-360_u-PIT_0.3_CKPT', 
+                '/home/aimaster/lab_storage/Datasets/LibriMix/MixedData/Libri2Mix/wav8k/min/train-360/train-360_tfrecord', 
+                '/home/aimaster/lab_storage/Datasets/LibriMix/MixedData/Libri2Mix/wav8k/min/dev/dev_tfrecord',
+                '/home/aimaster/lab_storage/Datasets/LibriMix/MixedData/Libri2Mix/wav8k/min/test/test_tfrecord', 
+                '/home/aimaster/lab_storage/models/Librimix/wav8k/min/BASELINE_upit_dropout0.3_epoch132',
+                True)
+    """
+    args = Config( 2048      , 64      , 512              , 0.1 , "gated-gelu", 4       , 1.,
+                1e-06    , "t5"             , 8 , "absolute" , 200     , 129   , 32,
+                "CKPT", "wav8k", "min", "train-360", "mse", "inverse_root",
+                129, 129, 25, 'mixed', 'C:/J_and_J_Research/mycode/CKPT', 
+                'C:/J_and_J_Research/mycode/tfrecords/tr_tfrecord', 
+                'C:/J_and_J_Research/mycode/tfrecords/cv_tfrecord',
+                'C:/J_and_J_Research/mycode/tfrecords/tt_tfrecords_real', 
+                'C:/J_and_J_Research/mycode/test_wav',
+                True) 
+    print("hello World!")
+    train_model(args)
+
+    #predict(args)
+
 
 def main():
     Config = namedtuple('Config',  
@@ -386,4 +451,4 @@ def main():
     predict(args)
 
 if __name__ == "__main__":
-    main()
+    main2()
