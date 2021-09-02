@@ -6,15 +6,16 @@ mse_loss_object = tf.keras.losses.MeanSquaredError(
 #tf.keras.losses.SparseCategoricalCrossentropy(from_logits=True, reduction='none')
 
 def mse_with_proper_loss(output_size):
-    def MSE_Custom_Loss(real, pred):
+    def MSE_Custom_Loss(y_true, y_pred):
         # pred = (batch, seq_len, output_size)
         # mask (batch, seq_len)
-        ori_length = tf.shape(real)[1]
-        real_real = tf.slice(real, [0, 0, 0], [-1, ori_length-1, -1])
-        lengths = tf.slice(real, [0, ori_length-1, 0], [-1, -1, 1]) 
+        ori_length = tf.shape(y_true)[1]
 
-        mask = tf.cast(tf.sequence_mask(tf.squeeze(lengths), tf.shape(pred)[1]), tf.float32) # tf.math.logical_not(tf.math.equal(real, 0))
-        loss_ = mse_loss_object(real_real, pred)
+        real_real = tf.slice(y_true, [0, 0, 0], [-1, ori_length-1, -1])
+        lengths = tf.slice(y_true, [0, ori_length-1, 0], [-1, -1, 1]) 
+
+        mask = tf.cast(tf.sequence_mask(tf.squeeze(lengths), tf.shape(y_pred)[1]), tf.float32) # tf.math.logical_not(tf.math.equal(real, 0))
+        loss_ = mse_loss_object(real_real, y_pred)
 
         mask = tf.cast(mask, dtype=loss_.dtype)
         loss_ *= mask
@@ -23,6 +24,30 @@ def mse_with_proper_loss(output_size):
     return MSE_Custom_Loss
 
 # Custom PIT loss
+
+def pit_with_stft_trace(output_size):
+    def pit_loss(y_true, y_pred):
+        ori_length = tf.shape(y_true)[1]
+        
+        # Label & Length divide
+        labels = tf.slice(y_true, [0, 1, 0], [-1, -1, -1]) # [batch_size, length_size, 129]
+        lengths = tf.slice(y_true, [0, 0, 0], [-1, 1, 1]) # [batch_size, 1, 1]
+        
+        mask = tf.cast(tf.sequence_mask(tf.squeeze(lengths), tf.shape(y_pred)[1]), tf.float32) # batchsize, length_size
+        mask = tf.expand_dims(mask, axis=-1) # batchsize, length_size, 1
+        mask = tf.tile(mask, [1, 1, output_size]) # batchsize, length_size, 129
+
+
+        # Masking
+        mask_pred = y_pred * mask  # batchsize, length_size, 129
+
+        cost = tf.reduce_sum(tf.pow(mask_pred - labels, 2), 1)
+        cost = tf.reduce_sum(cost, 1)  / tf.cast(tf.squeeze(lengths), tf.float32)
+        #  / tf.tile(tf.expand_dims(tf.squeeze(lengths),1),[1, output_size]) 
+        pit_loss = tf.reduce_sum(cost)
+
+        return pit_loss
+    return pit_loss
 
 def pit_with_outputsize(output_size):
     def pit_loss(y_true, y_pred):
@@ -78,6 +103,7 @@ def pit_with_outputsize(output_size):
 
         return pit_loss
     return pit_loss
+
 
 def just_mse_loss(output_size):
     def mse_loss(y_true, y_pred):

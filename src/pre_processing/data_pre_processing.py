@@ -41,11 +41,16 @@ output = tf.repeat(output, batch_size, 0)
 
 """
 
+# Padding = 0
+# START Token = -1
+# END Token = -9
+# Trace = -5
+# S1 = (-3,-4,-5)*43
 START_TOKEN = tf.cast(tf.fill([1,129],-1),tf.float32)
 PADDING_TOKEN = tf.cast(tf.fill([1,129],0),tf.float32)
-END_TOKEN = tf.cast(tf.fill([1,129],-2),tf.float32)
-TRACE_TOKEN = tf.cast(tf.fill([1,129],-3),tf.float32)
-SOURCE1_TOKEN = tf.cast(tf.fill([1,129],-4),tf.float32)
+END_TOKEN = tf.cast(tf.fill([1,129],-9),tf.float32)
+TRACE_TOKEN = tf.cast(tf.fill([1,129],-5),tf.float32)
+SOURCE1_TOKEN = tf.expand_dims(tf.convert_to_tensor([-3,-4,-5]*43, dtype=tf.float32), axis=0) # -3, -4, -5 가 반복되면 Source 1이란 뜻이다...
 
 def data_preprocessing(data, check, input_size=129*2, output_size=129*2):
     if check == 'inputs':
@@ -61,26 +66,24 @@ def data_preprocessing(data, check, input_size=129*2, output_size=129*2):
         return label1, label2
 
 
-def data_preprocessing_trace_task(mix_data, labels, input_size=129*2, output_size=129*2):
+def data_preprocessing_trace_task(mix_data, labels, input_size=129*2, output_size=129):
     
     inputs = tf.slice(mix_data, [0, 0], [-1, input_size//2])
     angle = tf.slice(mix_data, [0, input_size//2], [-1, -1])
     inputs = tf.concat([TRACE_TOKEN, inputs], 0)
     inputs = tf.concat([inputs, SOURCE1_TOKEN], 0)
     
-    label1 = tf.slice(labels, [0, 0], [-1, output_size//2])
-    label2 = tf.slice(labels, [0, output_size//2], [-1, -1])
-    label1_head = tf.slice(labels, [0, 0], [0, output_size//2])
-    label2_head = tf.slice(labels, [0, output_size//2], [0, -1])
+    slice_length = np.random.choice(10) + 1
+    label = tf.slice(labels, [slice_length, 0], [-1, output_size])
+    label_head = tf.slice(labels, [0, 0], [slice_length, output_size])
 
-    inputs1 = tf.concat([inputs, label1_head], 0)
-    inputs2 = tf.concat([inputs, label2_head], 0)
+    inputs = tf.concat([inputs, label_head], 0)
 
-    label1 = tf.concat([SOURCE1_TOKEN, label1], 0)
-    label2 = tf.concat([SOURCE1_TOKEN, label2], 0)
+    label = tf.concat([SOURCE1_TOKEN, label], 0)
+    label = tf.concat([label, END_TOKEN], 0)
 
 
-    return inputs1, label1, inputs2, label2, angle
+    return inputs, label, angle, slice_length
 
 
 
@@ -106,7 +109,13 @@ def read_tfrecord(example, input_size=129*2, output_size=129*2, check='train', c
         if check == "test":
             return inputs, angle, example['labels'], example['name'], example['length']
         return inputs, tf.concat([example['labels'], tiled], 0), example['length']
-    
+    elif case =="trace":
+        inputs, label, angle, slice_length = data_preprocessing_trace_task(example["inputs"], example['labels'], input_size, output_size//2)
+        tiled = tf.tile(tf.expand_dims(example['length'] - slice_length + 1, 1), [1, output_size//2])
+
+        if check == "test":
+            return inputs, angle, label, example['name'], example['length'] + slice_length + 2
+        return inputs, tf.concat([tiled, label], 0), example['length'] + slice_length + 2
     else:
         if check == "test":
             return example['inputs'], example['labels'], example['name'], example['length']
@@ -140,8 +149,8 @@ def get_dataset(filenames, input_size=129*2, output_size=129*2, batch_size=BATCH
     dataset = load_dataset(filenames, input_size, output_size, case=case)
     dataset = dataset.shuffle(2048)
     dataset = dataset.prefetch(buffer_size=AUTOTUNE)
-    dataset = dataset.batch(batch_size)
-#     dataset = dataset.padded_batch(batch_size, padded_shapes=(None))
+    #dataset = dataset.batch(batch_size)
+    dataset = dataset.padded_batch(batch_size, padded_shapes=(None))
     
     return dataset
 
@@ -149,8 +158,8 @@ def get_dataset_for_test(filenames, input_size=129*2, output_size=129*2,batch_si
     dataset = load_dataset(filenames, input_size, output_size, check='test', case=case)
     dataset = dataset.repeat(1)
     dataset = dataset.prefetch(buffer_size=AUTOTUNE)
-    dataset = dataset.batch(batch_size)
-#     dataset = dataset.padded_batch(batch_size, padded_shapes=(None))
+    #dataset = dataset.batch(batch_size)
+    dataset = dataset.padded_batch(batch_size, padded_shapes=(None))
     
     return dataset
 

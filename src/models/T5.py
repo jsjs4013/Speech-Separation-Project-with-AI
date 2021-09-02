@@ -10,15 +10,15 @@ import scipy
 import numpy as np
 from util.global_function import mkdir_p
 from util.math_function import create_padding_mask, create_look_ahead_mask
-from losses.custom_loss import mse_with_proper_loss, MSE_Custom_Loss_No_Length, pit_with_outputsize
+from losses.custom_loss import mse_with_proper_loss, MSE_Custom_Loss_No_Length, pit_with_outputsize, pit_with_stft_trace
 from Layers import TransformerSpeechSep
 from Schedulers import CustomSchedule
-from Real_Layers import T5Model
+from Real_Layers import T5Model, T5ModelNoMaskCreationModel
 from pre_processing.data_pre_processing import load_data
 
 from util.audio_utils import istft, audiowrite
 from tqdm.auto import tqdm
-from T5_variations import VainillaT5, SourceBySourceT5
+from T5_variations import VainillaT5, SourceBySourceT5, T5ChangedSTFT
 
 
 BATCH_SIZE = 25
@@ -83,7 +83,7 @@ def build_real_T5(input_size, output_size, args):
     tf.keras.layers.Input(shape=(None, input_size)),
     tf.keras.layers.Input(shape=(1)) )
     # targets, length
-    transformer = T5Model(num_layers=args.num_layers, d_model=args.d_model, num_heads=args.num_heads, d_ff=args.d_ff, d_kv = args.d_kv, vocab_size=0, feed_forward_proj = args.feed_forward_proj, 
+    transformer = T5ModelNoMaskCreationModel(num_layers=args.num_layers, d_model=args.d_model, num_heads=args.num_heads, d_ff=args.d_ff, d_kv = args.d_kv, vocab_size=0, feed_forward_proj = args.feed_forward_proj, 
             relative_attention_num_buckets=args.relative_attention_num_buckets, eps=args.layer_norm_epsilon, dropout=args.dropout, factor=args.init_factor,
             embed_or_dense="dense")
 
@@ -95,15 +95,14 @@ def build_real_T5(input_size, output_size, args):
             decoder_input_ids=tar, 
              training=False) # (batch_size, tar_seq_len, target_vocab_size)
     
-    model = VainillaT5(inputs=inputs, outputs=outputs)
-    model.build(inputs)
+    model = T5ChangedSTFT(inputs=inputs, outputs=outputs)
     model.summary()
     learning_rate = CustomSchedule(args.d_model)
     optimizer = tf.keras.optimizers.Adam(learning_rate, beta_1=0.9, beta_2=0.98,
-                                    epsilon=1e-9)
+                                    epsilon=1e-8)
     #model.add_metric(tf.keras.metrics.Mean(name='train_loss')(outputs))
     #model.compile(loss=mse_with_proper_loss(output_size), optimizer=optimizer)
-    model.compile(loss=pit_with_outputsize(output_size), optimizer=optimizer)
+    model.compile(loss=pit_with_stft_trace(output_size), optimizer=optimizer)
 #     model.compile(loss=keras.losses.mean_squared_error, optimizer=adam)
 
     return model
@@ -168,7 +167,7 @@ def train_model(args):
         # 사용 안할 때는 load_model 주석 처리 하자
     #     model = load_model('./CKPT/CKP_ep_29__loss_102.63367_.h5', custom_objects={'pit_loss': pit_with_outputsize(OUTPUT_SIZE)})
         
-        model = build_T5(args.input_size, args.output_size, args)
+        model = build_real_T5(args.input_size, args.output_size, args)
         #if args.is_load_model is True:
             
         tf.executing_eagerly()
@@ -406,7 +405,7 @@ def main2():
     args = Config( 2048      , 64      , 512              , 0.1 , "gated-gelu", 4       , 1.,
                 1e-06    , "t5"             , 8 , "absolute" , 200     , 129   , 32,
                 "CKPT", "wav8k", "min", "train-360", "mse", "inverse_root",
-                129, 129, 25, 'mixed', 'C:/J_and_J_Research/mycode/CKPT', 
+                129, 129, 25, 'trace', 'C:/J_and_J_Research/mycode/CKPT', 
                 'C:/J_and_J_Research/mycode/tfrecords/tr_tfrecord', 
                 'C:/J_and_J_Research/mycode/tfrecords/cv_tfrecord',
                 'C:/J_and_J_Research/mycode/tfrecords/tt_tfrecords_real', 

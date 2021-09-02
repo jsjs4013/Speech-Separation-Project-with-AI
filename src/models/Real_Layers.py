@@ -416,11 +416,11 @@ class T5Block(tf.keras.layers.Layer):
     def __init__(self,  d_model, d_ff, d_kv, feed_forward_proj, num_heads, is_decoder, relative_attention_num_buckets, eps = 1e-6,  has_relative_attention_bias=False, dropout=0.1, factor=1.):
         super(T5Block, self).__init__()
         self.is_decoder = is_decoder
-        self.layer = tf.keras.Sequential()
-        self.layer.add(T5LayerSelfAttention(d_model, d_kv, num_heads, is_decoder, relative_attention_num_buckets, eps = eps, has_relative_attention_bias=has_relative_attention_bias, dropout=dropout, factor=factor))
+        self.self_attention_layer = T5LayerSelfAttention(d_model, d_kv, num_heads, is_decoder, relative_attention_num_buckets, eps = eps, has_relative_attention_bias=has_relative_attention_bias, dropout=dropout, factor=factor)
+        self.cross_attention_layer = None
         if self.is_decoder:
-            self.layer.add(T5LayerCrossAttention(d_model, d_kv, num_heads, is_decoder, relative_attention_num_buckets, eps = eps, dropout= dropout, factor=factor))
-        self.layer.add(FeedForwardLayer(d_model, d_ff, feed_forward_proj, dropout, factor=factor))
+            self.cross_attention_layer = T5LayerCrossAttention(d_model, d_kv, num_heads, is_decoder, relative_attention_num_buckets, eps = eps, dropout= dropout, factor=factor)
+        self.fnn_layer = FeedForwardLayer(d_model, d_ff, feed_forward_proj, dropout, factor=factor)
 
     def call(
         self,
@@ -454,7 +454,7 @@ class T5Block(tf.keras.layers.Layer):
         else:
             self_attn_past_key_value, cross_attn_past_key_value = None, None
 
-        self_attention_outputs = self.layer.layers[0](
+        self_attention_outputs = self.self_attention_layer(
             hidden_states,
             attention_mask=attention_mask,
             position_bias=position_bias,
@@ -480,7 +480,7 @@ class T5Block(tf.keras.layers.Layer):
             else:
                 query_length = None
 
-            cross_attention_outputs = self.layer.layers[1](
+            cross_attention_outputs = self.cross_attention_layer(
                 hidden_states,
                 key_value_states=encoder_hidden_states,
                 attention_mask=encoder_attention_mask,
@@ -506,7 +506,7 @@ class T5Block(tf.keras.layers.Layer):
             attention_outputs = attention_outputs + cross_attention_outputs[2:]
 
         # Apply Feed Forward layer
-        hidden_states = self.layer.layers[-1](hidden_states)
+        hidden_states = self.fnn_layer(hidden_states)
 
         # clamp inf values to enable fp16 training
         if hidden_states.dtype == tf.float16 and tf.reduce_any(tf.math.isinf(hidden_states)):
@@ -529,9 +529,7 @@ class T5Stack(tf.keras.layers.Layer):
         self.embed_tokens = embed_tokens
         self.is_decoder = is_decoder
 
-        self.block = tf.keras.Sequential(
-            [T5Block(d_model, d_ff, d_kv, feed_forward_proj, num_heads, is_decoder, relative_attention_num_buckets, eps = eps, dropout=dropout, has_relative_attention_bias=bool(i == 0), factor=factor) for i in range(num_layers)]
-        )
+        self.block = [T5Block(d_model, d_ff, d_kv, feed_forward_proj, num_heads, is_decoder, relative_attention_num_buckets, eps = eps, dropout=dropout, has_relative_attention_bias=bool(i == 0), factor=factor) for i in range(num_layers)]
         self.final_layer_norm = tf.keras.layers.LayerNormalization(epsilon=eps)
         self.dropout = tf.keras.layers.Dropout(dropout)
         self.num_layers= num_layers
@@ -685,7 +683,7 @@ class T5Stack(tf.keras.layers.Layer):
 
         # initialize past_key_values with `None` if past does not exist
         if past_key_values is None:
-            past_key_values = [None] * len(self.block.layers)
+            past_key_values = [None] * len(self.block)
 
         # We can provide a self-attention mask of dimensions [batch_size, from_seq_length, to_seq_length]
         # ourselves in which case we just need to make it broadcastable to all heads.
@@ -716,7 +714,7 @@ class T5Stack(tf.keras.layers.Layer):
 
         hidden_states = self.dropout(inputs_embeds)
 
-        for i, (layer_module, past_key_value) in enumerate(zip(self.block.layers, past_key_values)):
+        for i, (layer_module, past_key_value) in enumerate(zip(self.block, past_key_values)):
             layer_head_mask = head_mask[i]
             cross_attn_layer_head_mask = cross_attn_head_mask[i]
             # Model parallel
@@ -921,7 +919,7 @@ class T5Stack(tf.keras.layers.Layer):
             list with :obj:`[None]` for each layer.
         """
         if head_mask is not None:
-            head_mask = _convert_head_mask_to_5d(head_mask, num_hidden_layers)
+            head_mask = self._convert_head_mask_to_5d(head_mask, num_hidden_layers)
             if is_attention_chunked is True:
                 head_mask = tf.expand_dims(head_mask,axis=-1)
         else:
@@ -950,13 +948,15 @@ class T5Model(tf.keras.Model):
         super(T5Model, self).__init__()
         default_initializer = tf.keras.initializers.RandomNormal(mean=0, stddev=factor*1.)
         if embed_or_dense == "embed":
-            self.shared = tf.keras.layers.Embedding(vocab_size, d_model, embeddings_initializer=default_initializer)
+            self.enc_emb = tf.keras.layers.Embedding(vocab_size, d_model, embeddings_initializer=default_initializer)
+            self.dec_emb = self.enc_emb
         else:
-            self.shared = tf.keras.layers.Dense(d_model, kernel_initializer=default_initializer, use_bias=False, activation = 'tanh')
+            self.enc_emb = tf.keras.layers.Dense(d_model, kernel_initializer=default_initializer, use_bias=False, activation = 'tanh')
+            self.dec_emb = tf.keras.layers.Dense(d_model, kernel_initializer=default_initializer, use_bias=False, activation = 'tanh')
 
-        self.encoder = T5Stack(num_layers, d_model, d_ff, d_kv, feed_forward_proj, num_heads, is_decoder = False, relative_attention_num_buckets=relative_attention_num_buckets, eps = eps, dropout=dropout, embed_tokens = self.shared, factor=factor)
+        self.encoder = T5Stack(num_layers, d_model, d_ff, d_kv, feed_forward_proj, num_heads, is_decoder = False, relative_attention_num_buckets=relative_attention_num_buckets, eps = eps, dropout=dropout, embed_tokens = self.enc_emb, factor=factor)
 
-        self.decoder = T5Stack(num_layers, d_model, d_ff, d_kv, feed_forward_proj, num_heads, is_decoder = True, relative_attention_num_buckets=relative_attention_num_buckets, eps = eps, dropout=dropout, embed_tokens = self.shared, factor=factor)
+        self.decoder = T5Stack(num_layers, d_model, d_ff, d_kv, feed_forward_proj, num_heads, is_decoder = True, relative_attention_num_buckets=relative_attention_num_buckets, eps = eps, dropout=dropout, embed_tokens = self.dec_emb, factor=factor)
         self.num_layers = num_layers
         
         #self.init_weights()
@@ -1080,15 +1080,17 @@ class T5Model(tf.keras.Model):
             encoder_attentions=encoder_outputs.attentions,
         )
 
-class T5ModelMaskCreationModel(tf.keras.Model):
+class T5ModelNoMaskCreationModel(tf.keras.Model):
     def __init__(self, vocab_size, num_layers, d_model, d_ff, d_kv, feed_forward_proj, 
         num_heads, relative_attention_num_buckets, eps = 1e-6, dropout=0.1, embed_tokens=None, 
-        factor=1., embed_or_dense="embed"):
-        super(T5ModelMaskCreationModel, self).__init__()
+        factor=1., embed_or_dense="embed", target_size = 129):
+        super(T5ModelNoMaskCreationModel, self).__init__()
         self.t5 = T5Model(num_layers=num_layers, d_model=d_model, num_heads=num_heads, d_ff=d_ff, d_kv = d_kv, vocab_size=0, feed_forward_proj = feed_forward_proj, 
             relative_attention_num_buckets=relative_attention_num_buckets, eps=eps, dropout=dropout, factor=factor,
             embed_or_dense=embed_or_dense)
-            
+        
+        self.final_layer = tf.keras.layers.Dense(target_size) # s1 generator
+
         self.mtp = tf.keras.layers.Multiply()
         
         self.concat = tf.keras.layers.Concatenate()
@@ -1120,11 +1122,12 @@ class T5ModelMaskCreationModel(tf.keras.Model):
         
         #final_output = self.mtp([final_output[:,:-1,:], inputs])
         # added Layers for Speech Separation
-        
         # Multiply with Mask creatd by Transformers
-        inputs = self.concat([input_ids[:,:decoder_input_ids.shape[1],:], input_ids[:,:decoder_input_ids.shape[1],:]])
+        final_output = self.final_layer(outputs[0])
+
+        #inputs = self.concat([input_ids[:,:decoder_input_ids.shape[1],:], input_ids[:,:decoder_input_ids.shape[1],:]])
         
-        final_output = self.mtp([outputs[0], inputs])
+        #final_output = self.mtp([outputs, inputs])
         """
         final_output = self.dropout(final_output, training = training)
         pred1 = self.maskLayer1(final_output)
