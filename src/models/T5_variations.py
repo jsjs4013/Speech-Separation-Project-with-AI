@@ -107,8 +107,6 @@ class VainillaT5(tf.keras.Model):
         return self((inp, tar_inp, length), training=False)
 
 
-import tensorflow as tf
-
 class T5ChangedSTFT(tf.keras.Model):
     def train_step(self, data):
         """print('inp',inp.shape) 
@@ -116,15 +114,14 @@ class T5ChangedSTFT(tf.keras.Model):
         endMask = tf.cast(tf.fill([1,258],-2),dtype=tf.float32)
         tar_inp = tf.concat([startMask, tar],0)
         tar_real = tf.concat([tar, endMask],0)
-        print('tar_inp',tar_inp.shape)
-        print('tar_real',tar_real[0])"""
+        """
         inp, tar, length = data
         startMask = tf.cast(tf.fill([tf.shape(tar)[0], 1, tf.shape(tar)[-1]],-1),dtype=tf.float32)
+        tar = tf.concat([startMask, tar],1)
 
-        tar_inp = tar[:, 1:-1, :]
-        tar_real = tar[:, :, :]
+        tar_inp = tar[:, :-2, :]
+        tar_real = tar[:, 1:, :]
         
-        tar_inp = tf.concat([startMask, tar_inp],1)
 
         """
         enc_padding_mask, combined_mask, dec_padding_mask = None, None, None
@@ -153,6 +150,11 @@ class T5ChangedSTFT(tf.keras.Model):
 
         tar_inp = tar[:, :-2, :]
         tar_real = tar[:, 1:, :]
+        
+        """tar_inp = tar[:, 1:-1, :]
+        tar_real = tar[:, :, :]
+        
+        tar_inp = tf.concat([startMask, tar_inp],1)"""
 
         """
         encoder_input = inp

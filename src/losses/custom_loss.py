@@ -30,9 +30,12 @@ def pit_with_stft_trace(output_size):
         ori_length = tf.shape(y_true)[1]
         
         # Label & Length divide
-        labels = tf.slice(y_true, [0, 1, 0], [-1, -1, -1]) # [batch_size, length_size, 129]
-        lengths = tf.slice(y_true, [0, 0, 0], [-1, 1, 1]) # [batch_size, 1, 1]
+        #labels = tf.slice(y_true, [0, 0, 0], [-1, ori_length-1, -1]) #tf.slice(y_true, [0, 1, 0], [-1, -1, -1]) # [batch_size, length_size, 129]
+        #lengths = tf.slice(y_true, [0, 0, 0], [-1, 1, 1]) # [batch_size, 1, 1]
         
+        labels = tf.slice(y_true, [0, 0, 0], [-1, ori_length-1, -1])
+        lengths = tf.slice(y_true, [0, ori_length-1, 0], [-1, -1, 1]) 
+
         mask = tf.cast(tf.sequence_mask(tf.squeeze(lengths), tf.shape(y_pred)[1]), tf.float32) # batchsize, length_size
         mask = tf.expand_dims(mask, axis=-1) # batchsize, length_size, 1
         mask = tf.tile(mask, [1, 1, output_size]) # batchsize, length_size, 129

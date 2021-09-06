@@ -77,10 +77,11 @@ def build_T5(input_size, output_size, args):
 #     model.compile(loss=keras.losses.mean_squared_error, optimizer=adam)
 
     return model
+import tensorflow_addons as tfa
 
 def build_real_T5(input_size, output_size, args):
     inputs = (tf.keras.layers.Input(shape=(None, input_size)),
-    tf.keras.layers.Input(shape=(None, input_size)),
+    tf.keras.layers.Input(shape=(None, output_size)),
     tf.keras.layers.Input(shape=(1)) )
     # targets, length
     transformer = T5ModelNoMaskCreationModel(num_layers=args.num_layers, d_model=args.d_model, num_heads=args.num_heads, d_ff=args.d_ff, d_kv = args.d_kv, vocab_size=0, feed_forward_proj = args.feed_forward_proj, 
@@ -98,8 +99,8 @@ def build_real_T5(input_size, output_size, args):
     model = T5ChangedSTFT(inputs=inputs, outputs=outputs)
     model.summary()
     learning_rate = CustomSchedule(args.d_model)
-    optimizer = tf.keras.optimizers.Adam(learning_rate, beta_1=0.9, beta_2=0.98,
-                                    epsilon=1e-8)
+    optimizer = tf.keras.optimizers.Adam(learning_rate, beta_1=0.9, beta_2=0.98,epsilon=1e-8)
+    #optimizer = tfa.optimizers.AdamW(learning_rate=learning_rate, beta_1=0.9, beta_2=0.999,epsilon=1e-8, weight_decay = 0.01)
     #model.add_metric(tf.keras.metrics.Mean(name='train_loss')(outputs))
     #model.compile(loss=mse_with_proper_loss(output_size), optimizer=optimizer)
     model.compile(loss=pit_with_stft_trace(output_size), optimizer=optimizer)
@@ -160,7 +161,10 @@ def train_model(args):
 
     epoch = args.n_epochs
 
-    strategy = tf.distribute.MirroredStrategy() # '/gpu:0','/gpu:1','/gpu:2','/gpu:4','/gpu:5','/gpu:6','/gpu:7'
+    strategy = tf.distribute.MirroredStrategy(['/gpu:0','/gpu:1','/gpu:2','/gpu:3','/gpu:4','/gpu:5','/gpu:6']) # '/gpu:0','/gpu:1','/gpu:2','/gpu:4','/gpu:5','/gpu:6','/gpu:7'
+    #physical_devices = tf.config.list_physical_devices('GPU')
+    #tf.config.set_visible_devices(physical_devices[0:7], 'GPU')
+    #strategy =  tf.distribute.MultiWorkerMirroredStrategy()
     print('장치의 수: {}'.format(strategy.num_replicas_in_sync))
 
     with strategy.scope():
@@ -391,14 +395,13 @@ def main2():
                     "model_path, wav_type, size_type, train_type, loss_type, learning_rate_type,"
                     "input_size, output_size, batch_size, case, ckpt_path, tr_path, val_path, tt_path,"
                     "test_wav_dir, is_load_model")
-    """
     args = Config( 2048      , 64      , 512              , 0.1 , "gated-gelu", 4       , 1.,
                 1e-06    , "t5"             , 8 , "absolute" , 200     , 129   , 32,
                 "CKPT", "wav8k", "min", "train-360", "mse", "inverse_root",
-                129, 129, 25, 'mixed', '/home/aimaster/lab_storage/models/Librimix/wav8k/min/train-360_u-PIT_0.3_CKPT', 
-                '/home/aimaster/lab_storage/Datasets/LibriMix/MixedData/Libri2Mix/wav8k/min/train-360/train-360_tfrecord', 
-                '/home/aimaster/lab_storage/Datasets/LibriMix/MixedData/Libri2Mix/wav8k/min/dev/dev_tfrecord',
-                '/home/aimaster/lab_storage/Datasets/LibriMix/MixedData/Libri2Mix/wav8k/min/test/test_tfrecord', 
+                129, 129, 100, 'trace', '/home/aimaster/lab_storage/Librimix/models/min/train-360_T5_changed_audio_gen', 
+                '/home/aimaster/lab_storage/Librimix/LibriMix/MixedData/Libri2Mix/wav8k/min/train-360/train-360_trace_tfrecord', 
+                '/home/aimaster/lab_storage/Librimix/LibriMix/MixedData/Libri2Mix/wav8k/min/dev/dev_trace_tfrecord',
+                '/home/aimaster/lab_storage/Librimix/LibriMix/MixedData/Libri2Mix/wav8k/min/test/test_trace_tfrecord', 
                 '/home/aimaster/lab_storage/models/Librimix/wav8k/min/BASELINE_upit_dropout0.3_epoch132',
                 True)
     """
@@ -411,6 +414,7 @@ def main2():
                 'C:/J_and_J_Research/mycode/tfrecords/tt_tfrecords_real', 
                 'C:/J_and_J_Research/mycode/test_wav',
                 True) 
+    """
     print("hello World!")
     train_model(args)
 
@@ -424,14 +428,13 @@ def main():
                     "model_path, wav_type, size_type, train_type, loss_type, learning_rate_type,"
                     "input_size, output_size, batch_size, case, ckpt_path, tr_path, val_path, tt_path,"
                     "test_wav_dir, is_load_model")
-    """
     args = Config( 2048      , 64      , 512              , 0.1 , "gated_gelu", 4       , 
                 1e-06    , "t5"             , 8 , "absolute" , 200     , 129   ,
                 "CKPT", "wav8k", "min", "train-360", "mse", "inverse_root",
-                129, 129, 25, 'mixed', '/home/aimaster/lab_storage/models/Librimix/wav8k/min/train-360_u-PIT_0.3_CKPT', 
-                '/home/aimaster/lab_storage/Datasets/LibriMix/MixedData/Libri2Mix/wav8k/min/train-360/train-360_tfrecord', 
-                '/home/aimaster/lab_storage/Datasets/LibriMix/MixedData/Libri2Mix/wav8k/min/dev/dev_tfrecord',
-                '/home/aimaster/lab_storage/Datasets/LibriMix/MixedData/Libri2Mix/wav8k/min/test/test_tfrecord', 
+                129, 129, 64, 'mixed', '/home/aimaster/lab_storage/Librimix/models/min/train-360_T5_changed_audio_gen', 
+                '/home/aimaster/lab_storage/Librimix/LibriMix/MixedData/Libri2Mix/wav8k/min/train-360/train-360_trace_tfrecord', 
+                '/home/aimaster/lab_storage/Librimix/LibriMix/MixedData/Libri2Mix/wav8k/min/dev/dev_trace_tfrecord',
+                '/home/aimaster/lab_storage/Librimix/LibriMix/MixedData/Libri2Mix/wav8k/min/test/test_trace_tfrecord', 
                 '/home/aimaster/lab_storage/models/Librimix/wav8k/min/BASELINE_upit_dropout0.3_epoch132',
                 True)
     """
@@ -444,6 +447,7 @@ def main():
                 'C:/J_and_J_Research/mycode/tfrecords/tt_tfrecords_real', 
                 'C:/J_and_J_Research/mycode/test_wav',
                 True) 
+    """
     print("hello World!")
     #train_model(args)
 

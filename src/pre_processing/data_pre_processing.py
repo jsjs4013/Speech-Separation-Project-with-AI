@@ -110,12 +110,12 @@ def read_tfrecord(example, input_size=129*2, output_size=129*2, check='train', c
             return inputs, angle, example['labels'], example['name'], example['length']
         return inputs, tf.concat([example['labels'], tiled], 0), example['length']
     elif case =="trace":
-        inputs, label, angle, slice_length = data_preprocessing_trace_task(example["inputs"], example['labels'], input_size, output_size//2)
-        tiled = tf.tile(tf.expand_dims(example['length'] - slice_length + 1, 1), [1, output_size//2])
+        inputs, label, angle, slice_length = data_preprocessing_trace_task(example["inputs"], example['labels'], input_size, output_size)
+        tiled = tf.tile(tf.expand_dims(example['length'] - slice_length + 1, 1), [1, output_size])
 
         if check == "test":
             return inputs, angle, label, example['name'], example['length'] + slice_length + 2
-        return inputs, tf.concat([tiled, label], 0), example['length'] + slice_length + 2
+        return inputs, tf.concat([label, tiled], 0), example['length'] + slice_length + 2
     else:
         if check == "test":
             return example['inputs'], example['labels'], example['name'], example['length']
@@ -139,6 +139,9 @@ def load_dataset(filenames, input_size=129*2, output_size=129*2, check='train', 
     if case == 'single':
         input_size=input_size//2
         output_size=output_size//2
+    elif case == 'trace':
+        input_size=input_size
+        output_size=output_size//2
     dataset = dataset.map(
         partial(read_tfrecord, input_size=input_size, output_size=output_size, check=check, case=case), num_parallel_calls=AUTOTUNE
     )
@@ -149,8 +152,8 @@ def get_dataset(filenames, input_size=129*2, output_size=129*2, batch_size=BATCH
     dataset = load_dataset(filenames, input_size, output_size, case=case)
     dataset = dataset.shuffle(2048)
     dataset = dataset.prefetch(buffer_size=AUTOTUNE)
-    #dataset = dataset.batch(batch_size)
-    dataset = dataset.padded_batch(batch_size, padded_shapes=(None))
+    dataset = dataset.batch(batch_size)
+    #dataset = dataset.padded_batch(batch_size, padded_shapes=(None))
     
     return dataset
 
@@ -158,8 +161,8 @@ def get_dataset_for_test(filenames, input_size=129*2, output_size=129*2,batch_si
     dataset = load_dataset(filenames, input_size, output_size, check='test', case=case)
     dataset = dataset.repeat(1)
     dataset = dataset.prefetch(buffer_size=AUTOTUNE)
-    #dataset = dataset.batch(batch_size)
-    dataset = dataset.padded_batch(batch_size, padded_shapes=(None))
+    dataset = dataset.batch(batch_size)
+    #dataset = dataset.padded_batch(batch_size, padded_shapes=(None))
     
     return dataset
 
