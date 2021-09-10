@@ -13,7 +13,7 @@ from util.math_function import create_padding_mask, create_look_ahead_mask
 from losses.custom_loss import mse_with_proper_loss, MSE_Custom_Loss_No_Length, pit_with_outputsize, pit_with_stft_trace
 from Layers import TransformerSpeechSep
 from Schedulers import CustomSchedule
-from Real_Layers import T5Model, T5ModelNoMaskCreationModel
+from Real_Layers import T5Model, T5ModelNoMaskCreationModel, T5ModelYesMaskCreationModel
 from pre_processing.data_pre_processing import load_data
 
 from util.audio_utils import istft, audiowrite
@@ -99,8 +99,8 @@ def build_real_T5(input_size, output_size, args):
     model = T5ChangedSTFT(inputs=inputs, outputs=outputs)
     model.summary()
     learning_rate = CustomSchedule(args.d_model)
-    optimizer = tf.keras.optimizers.Adam(learning_rate, beta_1=0.9, beta_2=0.98,epsilon=1e-8)
-    #optimizer = tfa.optimizers.AdamW(learning_rate=learning_rate, beta_1=0.9, beta_2=0.999,epsilon=1e-8, weight_decay = 0.01)
+    #optimizer = tf.keras.optimizers.Adam(learning_rate, beta_1=0.9, beta_2=0.98,epsilon=1e-8)
+    optimizer = tfa.optimizers.AdamW(learning_rate=learning_rate, beta_1=0.9, beta_2=0.999,epsilon=1e-8, weight_decay = 0.01)
     #model.add_metric(tf.keras.metrics.Mean(name='train_loss')(outputs))
     #model.compile(loss=mse_with_proper_loss(output_size), optimizer=optimizer)
     model.compile(loss=pit_with_stft_trace(output_size), optimizer=optimizer)
@@ -355,7 +355,7 @@ def predict(args):
             startMask = tf.cast(tf.fill([tf.shape(label_batch)[0], 1, tf.shape(label_batch)[-1]],-1),dtype=tf.float32)
             tar = tf.concat([startMask, label_batch],1)
 
-            tar_inp = tar[:, :400, :]
+            tar_inp = tar[:, :-2, :]
             result = model((input_batch, tar_inp, length), training=False)
             result = evaluate(input_batch, model, result, length, max_length=1800)
             #result = result[:,1:,:]
@@ -398,7 +398,7 @@ def main2():
     args = Config( 2048      , 64      , 512              , 0.1 , "gated-gelu", 4       , 1.,
                 1e-06    , "t5"             , 8 , "absolute" , 200     , 129   , 32,
                 "CKPT", "wav8k", "min", "train-360", "mse", "inverse_root",
-                129, 129, 100, 'trace', '/home/aimaster/lab_storage/Librimix/models/min/train-360_T5_changed_audio_gen', 
+                129, 129, 100, 'trace', '/home/aimaster/lab_storage/Librimix/models/min/train-360_T5_changed_audio_gen_emb_sharing', 
                 '/home/aimaster/lab_storage/Librimix/LibriMix/MixedData/Libri2Mix/wav8k/min/train-360/train-360_trace_tfrecord', 
                 '/home/aimaster/lab_storage/Librimix/LibriMix/MixedData/Libri2Mix/wav8k/min/dev/dev_trace_tfrecord',
                 '/home/aimaster/lab_storage/Librimix/LibriMix/MixedData/Libri2Mix/wav8k/min/test/test_trace_tfrecord', 

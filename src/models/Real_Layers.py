@@ -952,11 +952,11 @@ class T5Model(tf.keras.Model):
             self.dec_emb = self.enc_emb
         else:
             self.enc_emb = tf.keras.layers.Dense(d_model, kernel_initializer=default_initializer, use_bias=False, activation = 'tanh')
-            self.dec_emb = tf.keras.layers.Dense(d_model, kernel_initializer=default_initializer, use_bias=False, activation = 'tanh')
+            #self.dec_emb = tf.keras.layers.Dense(d_model, kernel_initializer=default_initializer, use_bias=False, activation = 'tanh')
 
         self.encoder = T5Stack(num_layers, d_model, d_ff, d_kv, feed_forward_proj, num_heads, is_decoder = False, relative_attention_num_buckets=relative_attention_num_buckets, eps = eps, dropout=dropout, embed_tokens = self.enc_emb, factor=factor)
 
-        self.decoder = T5Stack(num_layers, d_model, d_ff, d_kv, feed_forward_proj, num_heads, is_decoder = True, relative_attention_num_buckets=relative_attention_num_buckets, eps = eps, dropout=dropout, embed_tokens = self.dec_emb, factor=factor)
+        self.decoder = T5Stack(num_layers, d_model, d_ff, d_kv, feed_forward_proj, num_heads, is_decoder = True, relative_attention_num_buckets=relative_attention_num_buckets, eps = eps, dropout=dropout, embed_tokens = self.enc_emb, factor=factor)
         self.num_layers = num_layers
         
         #self.init_weights()
@@ -1128,6 +1128,67 @@ class T5ModelNoMaskCreationModel(tf.keras.Model):
         #inputs = self.concat([input_ids[:,:decoder_input_ids.shape[1],:], input_ids[:,:decoder_input_ids.shape[1],:]])
         
         #final_output = self.mtp([outputs, inputs])
+        """
+        final_output = self.dropout(final_output, training = training)
+        pred1 = self.maskLayer1(final_output)
+        pred2 = self.maskLayer2(final_output)
+        
+        cleaned1 = Multiply()([pred1, inp])
+        cleaned2 = Multiply()([pred2, inp])
+        
+        final_output = Concatenate()([cleaned1, cleaned2])
+        """
+        return final_output
+
+
+class T5ModelYesMaskCreationModel(tf.keras.Model):
+    def __init__(self, vocab_size, num_layers, d_model, d_ff, d_kv, feed_forward_proj, 
+        num_heads, relative_attention_num_buckets, eps = 1e-6, dropout=0.1, embed_tokens=None, 
+        factor=1., embed_or_dense="embed", target_size = 129):
+        super(T5ModelNoMaskCreationModel, self).__init__()
+        self.t5 = T5Model(num_layers=num_layers, d_model=d_model, num_heads=num_heads, d_ff=d_ff, d_kv = d_kv, vocab_size=0, feed_forward_proj = feed_forward_proj, 
+            relative_attention_num_buckets=relative_attention_num_buckets, eps=eps, dropout=dropout, factor=factor,
+            embed_or_dense=embed_or_dense)
+        
+        self.final_layer = tf.keras.layers.Dense(target_size) # s1 generator
+
+        self.mtp = tf.keras.layers.Multiply()
+        
+        self.concat = tf.keras.layers.Concatenate()
+
+    def call( # 결국 들어오는 것 : input_ids, attention_mask, decoder_input_ids, labels 
+        self,
+        input_ids=None, #
+        attention_mask=None, #
+        decoder_input_ids=None, #
+        decoder_attention_mask=None,
+        head_mask=None,
+        decoder_head_mask=None,
+        cross_attn_head_mask=None,
+        encoder_outputs=None,
+        past_key_values=None,
+        inputs_embeds=None,
+        decoder_inputs_embeds=None,
+        use_cache=None,
+        output_attentions=None,
+        output_hidden_states=None,
+        return_dict=None,
+        labels=None,
+    ):
+        
+        outputs = self.t5(input_ids=input_ids, attention_mask=attention_mask, decoder_input_ids=decoder_input_ids, 
+             training=False) # (batch_size, tar_seq_len, target_vocab_size)
+        #inputs = tf.concat([inp,inp],2)
+        #print('mask_output',final_output.shape)
+        
+        #final_output = self.mtp([final_output[:,:-1,:], inputs])
+        # added Layers for Speech Separation
+        # Multiply with Mask creatd by Transformers
+        final_output = self.final_layer(outputs[0])
+
+        #inputs = self.concat([input_ids[:,:decoder_input_ids.shape[1],:], input_ids[:,:decoder_input_ids.shape[1],:]])
+        
+        final_output = self.mtp([outputs, labels])
         """
         final_output = self.dropout(final_output, training = training)
         pred1 = self.maskLayer1(final_output)
