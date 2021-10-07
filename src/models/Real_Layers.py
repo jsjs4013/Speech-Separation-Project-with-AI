@@ -5,9 +5,16 @@ sys.path.append(os.path.dirname(os.path.abspath(os.path.dirname(__file__))))
 
 #from util.math_function import scaled_dot_product_attention, positional_encoding
 #from util.modeling_function import *
-from modelOutput import BaseModelOutputWithPastAndCrossAttentions, Seq2SeqModelOutput, BaseModelOutput
+from models.modelOutput import BaseModelOutputWithPastAndCrossAttentions, Seq2SeqModelOutput, BaseModelOutput
 import math
 
+"""
+고차원으로 mapping하는 Dense Layer를 거치고
+GatedGelu로 activation function을 거친 뒤
+다시 원래 차원(d_model)로 매핑하는 Dense Layer를 거친다.
+gelu는 파이토스 상위버전에서만 지원한다.
+initializer를 이용하여 weight 초기화를 진행한다.
+"""
 class Dense_GatedGelu_Dense(tf.keras.layers.Layer):
     def __init__(self, d_model, d_ff, dropout = 0.1, factor=1.):
         super(Dense_GatedGelu_Dense, self).__init__()
@@ -28,6 +35,9 @@ class Dense_GatedGelu_Dense(tf.keras.layers.Layer):
         
         return hidden_states
 
+"""
+Dense Relu Dense 레이어로 kreas.sequential을 이용해 정의한다.
+"""
 def dense_relu_dense(d_model, d_ff, dropout = 0.1, factor = 1.): 
     d_model_init = tf.keras.initializers.RandomNormal(mean=0, stddev= factor * (d_model**-0.5))
     d_ff_init = tf.keras.initializers.RandomNormal(mean=0, stddev= factor * (d_ff**-0.5))
@@ -37,7 +47,9 @@ def dense_relu_dense(d_model, d_ff, dropout = 0.1, factor = 1.):
         tf.keras.layers.Dense(d_model, kernel_initializer = d_ff_init, use_bias = False)  # (batch_size, seq_len, d_model)
     ])
 
-
+# Transformer 레이어의 Feedforward 레이어를 담당하고 있다.
+# Gated-gelu와 Relu 중 사용 가능하며, layer norm과 dropout이 적용된다.
+# 또한 skip connection도 적용된다.
 class FeedForwardLayer(tf.keras.layers.Layer):
     def __init__(self, d_model, d_ff, feed_forward_proj = "gated-gelu", dropout=0.1, factor=1.):
         super(FeedForwardLayer, self).__init__()
@@ -74,7 +86,7 @@ def find_pruneable_heads_and_indices(
         # Compute how many pruned heads are before the head and move the index accordingly
         head = head - sum(1 if h < head else 0 for h in already_pruned_heads)
         mask[head] = 0
-    mask = tf.eqaul(tf.reshape(mask, -1),1)
+    mask = tf.eqaul(tf.reshape(mask, -1),1)                                                                   
     index = tf.cast(tf.range(len(mask))[mask],dtype=tf.int64)
     return heads, index
 
@@ -950,9 +962,12 @@ class T5Model(tf.keras.Model):
         if embed_or_dense == "embed":
             self.enc_emb = tf.keras.layers.Embedding(vocab_size, d_model, embeddings_initializer=default_initializer)
             self.dec_emb = self.enc_emb
-        else:
+        elif embed_or_dense == "dense":
             self.enc_emb = tf.keras.layers.Dense(d_model, kernel_initializer=default_initializer, use_bias=False, activation = 'tanh')
             #self.dec_emb = tf.keras.layers.Dense(d_model, kernel_initializer=default_initializer, use_bias=False, activation = 'tanh')
+        elif embed_or_dense == "conv":
+            self.enc_emb = tf.keras.layers.Conv1D(filters=d_model, kernel_size=2, activation = 'sigmoid', padding='same', kernel_initializer="glorot_uniform")
+            #(d_model, kernel_initializer=default_initializer, use_bias=False, activation = 'tanh')
 
         self.encoder = T5Stack(num_layers, d_model, d_ff, d_kv, feed_forward_proj, num_heads, is_decoder = False, relative_attention_num_buckets=relative_attention_num_buckets, eps = eps, dropout=dropout, embed_tokens = self.enc_emb, factor=factor)
 
@@ -1091,9 +1106,9 @@ class T5ModelNoMaskCreationModel(tf.keras.Model):
         
         self.final_layer = tf.keras.layers.Dense(target_size) # s1 generator
 
-        self.mtp = tf.keras.layers.Multiply()
+        #self.mtp = tf.keras.layers.Multiply()
         
-        self.concat = tf.keras.layers.Concatenate()
+        #self.concat = tf.keras.layers.Concatenate()
 
     def call( # 결국 들어오는 것 : input_ids, attention_mask, decoder_input_ids, labels 
         self,

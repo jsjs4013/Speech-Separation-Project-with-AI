@@ -23,10 +23,10 @@
     "output_size" : 129, 
     "batch_size" : 100, 
     "case" : "trace", 
-    "ckpt_path" : "/home/aimaster/lab_storage/Librimix/models/min/train-360_T5_changed_audio_gen_emb_sharing", 
-    "tr_path" : "/home/aimaster/lab_storage/Librimix/LibriMix/MixedData/Libri2Mix/wav8k/min/train-360/train-360_trace_tfrecord", 
-    "val_path" : "/home/aimaster/lab_storage/Librimix/LibriMix/MixedData/Libri2Mix/wav8k/min/dev/dev_trace_tfrecord", 
-    "tt_path" : "/home/aimaster/lab_storage/Librimix/LibriMix/MixedData/Libri2Mix/wav8k/min/test/test_trace_tfrecord",
-    "test_wav_dir" : "C:/J_and_J_Research/mycode/test_wav", 
+    "ckpt_path" : "C:/J_and_J_Research/mycode/CKPT", 
+    "tr_path" : "C:/J_and_J_Research/mycode/tfrecords/tr_tfrecord_t", 
+    "val_path" : "C:/J_and_J_Research/mycode/tfrecords/cv_tfrecord_t", 
+    "tt_path" : "C:/J_and_J_Research/mycode/tfrecords/tt_tfrecords_real",
+    "test_wav_dir" : "/home/aimaster/lab_storage/models/Librimix/wav8k/min/BASELINE_upit_dropout0.3_epoch132", 
     "is_load_model" : true
 }

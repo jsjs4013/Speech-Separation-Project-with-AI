@@ -19,7 +19,7 @@ from pre_processing.data_pre_processing import load_data
 from util.audio_utils import istft, audiowrite
 from tqdm.auto import tqdm
 from T5_variations import VainillaT5, SourceBySourceT5, T5ChangedSTFT
-
+import tensorflow_addons as tfa
 
 BATCH_SIZE = 25
 INPUT_SIZE = 129
@@ -77,7 +77,7 @@ def build_T5(input_size, output_size, args):
 #     model.compile(loss=keras.losses.mean_squared_error, optimizer=adam)
 
     return model
-import tensorflow_addons as tfa
+
 
 def build_real_T5(input_size, output_size, args):
     inputs = (tf.keras.layers.Input(shape=(None, input_size)),
