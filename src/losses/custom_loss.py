@@ -3,7 +3,18 @@ import tensorflow as tf
 mse_loss_object = tf.keras.losses.MeanSquaredError(
     reduction=tf.keras.losses.Reduction.NONE, name='mean_squared_error'
 )
+ce_loss_object = tf.keras.losses.SparseCategoricalCrossentropy(
+    from_logits=True, reduction='none')
 #tf.keras.losses.SparseCategoricalCrossentropy(from_logits=True, reduction='none')
+
+def cse_loss_function(real, pred):
+  mask = tf.math.logical_not(tf.math.equal(real, 0))
+  loss_ = ce_loss_object(real, pred)
+
+  mask = tf.cast(mask, dtype=loss_.dtype)
+  loss_ *= mask
+
+  return tf.reduce_sum(loss_)/tf.reduce_sum(mask)
 
 def mse_with_proper_loss(output_size):
     def MSE_Custom_Loss(y_true, y_pred):
