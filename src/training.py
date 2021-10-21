@@ -21,6 +21,16 @@ from models.T5_variations import T5ChangedSTFT
 import matplotlib
 import matplotlib.pyplot as plt
 
+gpus = tf.config.experimental.list_physical_devices('GPU')
+if gpus:
+    try:
+        # Currently, memory growth needs to be the same across GPUs
+        for gpu in gpus:
+            tf.config.experimental.set_memory_growth(gpu, True)
+    except RuntimeError as e:
+        # Memory growth must be set before GPUs have been initialized
+        print(e)
+
 Config = namedtuple('Config',  
 field_names="d_ff,     d_kv,     d_model,              dropout, feed_forward_proj, num_layers, init_factor," 
             "layer_norm_epsilon, model_type, num_heads, positional_embedding, n_epochs, vocab_size, relative_attention_num_buckets,"
@@ -29,8 +39,8 @@ field_names="d_ff,     d_kv,     d_model,              dropout, feed_forward_pro
                 "test_wav_dir, is_load_model")
 args = Config( 2048      , 64      , 512              , 0.1 , "gated-gelu", 4       , 1.,
             1e-06    , "t5"             , 8 , "absolute" , 200     , 129   , 32,
-            "CKPT", "wav8k", "min", "train-360", "mse", "inverse_root", "conv",
-            40, 40, 10, 'trace', '/home/aimaster/lab_storage/Librimix/models/min/T5_autoencoder_conv1d', 
+            "CKPT", "wav8k", "min", "train-360", "mse", "inverse_root", "dense",
+            40, 40, 8, 'trace', '/home/aimaster/lab_storage/Librimix/models/min/T5_autoencoder_conv1d', 
             '/home/aimaster/lab_storage/Librimix/LibriMix/MixedData/Libri2Mix/wav8k/min/', 
             '/home/aimaster/lab_storage/Librimix/LibriMix/MixedData/Libri2Mix/wav8k/min/lists/',
             '/home/aimaster/lab_storage/models/Librimix/wav8k/min/t5_autoencoder',
@@ -274,7 +284,7 @@ def uPIT(input_size, output_size, batch):
 # Training part
 
 epoch = args.n_epochs
-strategy = tf.distribute.MirroredStrategy(['/gpu:1','/gpu:2','/gpu:3','/gpu:4','/gpu:5']) # '/gpu:0','/gpu:1','/gpu:2','/gpu:4','/gpu:5','/gpu:6','/gpu:7'
+strategy = tf.distribute.MirroredStrategy(['/gpu:1','/gpu:2','/gpu:4','/gpu:3']) # '/gpu:0','/gpu:1','/gpu:2','/gpu:4','/gpu:5','/gpu:6','/gpu:7'
 #physical_devices = tf.config.list_physical_devices('GPU')
 #tf.config.set_visible_devices(physical_devices[0:7], 'GPU')
 #strategy =  tf.distribute.MultiWorkerMirroredStrategy()
