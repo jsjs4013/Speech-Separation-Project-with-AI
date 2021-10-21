@@ -662,7 +662,7 @@ class T5Stack(tf.keras.layers.Layer):
             )
         elif input_ids is not None:
             input_shape = tf.shape(input_ids)
-        #    input_ids = tf.reshape(input_ids, (-1, input_shape[-1]))
+            input_ids = tf.reshape(input_ids, (-1, input_shape[-1]))
         elif inputs_embeds is not None:
             input_shape = tf.shape(inputs_embeds)[:-1]
         else:
@@ -961,7 +961,7 @@ class T5Model(tf.keras.Model):
         default_initializer = tf.keras.initializers.RandomNormal(mean=0, stddev=factor*1.)
         if embed_or_dense == "embed":
             self.enc_emb = tf.keras.layers.Embedding(vocab_size, d_model, embeddings_initializer=default_initializer)
-            self.dec_emb = self.enc_emb
+            self.dec_emb = tf.keras.layers.Embedding(vocab_size+2, d_model, embeddings_initializer=default_initializer)
         elif embed_or_dense == "dense":
             self.enc_emb = tf.keras.layers.Dense(d_model, kernel_initializer=default_initializer, use_bias=False, activation = 'tanh')
             #self.dec_emb = tf.keras.layers.Dense(d_model, kernel_initializer=default_initializer, use_bias=False, activation = 'tanh')
@@ -971,7 +971,7 @@ class T5Model(tf.keras.Model):
 
         self.encoder = T5Stack(num_layers, d_model, d_ff, d_kv, feed_forward_proj, num_heads, is_decoder = False, relative_attention_num_buckets=relative_attention_num_buckets, eps = eps, dropout=dropout, embed_tokens = self.enc_emb, factor=factor)
 
-        self.decoder = T5Stack(num_layers, d_model, d_ff, d_kv, feed_forward_proj, num_heads, is_decoder = True, relative_attention_num_buckets=relative_attention_num_buckets, eps = eps, dropout=dropout, embed_tokens = self.enc_emb, factor=factor)
+        self.decoder = T5Stack(num_layers, d_model, d_ff, d_kv, feed_forward_proj, num_heads, is_decoder = True, relative_attention_num_buckets=relative_attention_num_buckets, eps = eps, dropout=dropout, embed_tokens = self.dec_emb, factor=factor)
         self.num_layers = num_layers
         
         #self.init_weights()
@@ -1100,11 +1100,11 @@ class T5ModelNoMaskCreationModel(tf.keras.Model):
         num_heads, relative_attention_num_buckets, eps = 1e-6, dropout=0.1, embed_tokens=None, 
         factor=1., embed_or_dense="embed", target_size = 129):
         super(T5ModelNoMaskCreationModel, self).__init__()
-        self.t5 = T5Model(num_layers=num_layers, d_model=d_model, num_heads=num_heads, d_ff=d_ff, d_kv = d_kv, vocab_size=0, feed_forward_proj = feed_forward_proj, 
+        self.t5 = T5Model(vocab_size = vocab_size, num_layers=num_layers, d_model=d_model, num_heads=num_heads, d_ff=d_ff, d_kv = d_kv, feed_forward_proj = feed_forward_proj, 
             relative_attention_num_buckets=relative_attention_num_buckets, eps=eps, dropout=dropout, factor=factor,
             embed_or_dense=embed_or_dense)
         
-        self.final_layer = tf.keras.layers.Dense(target_size) # s1 generator
+        self.final_layer = tf.keras.layers.Dense(target_size, use_bias=False) # s1 generator
 
         #self.mtp = tf.keras.layers.Multiply()
         
